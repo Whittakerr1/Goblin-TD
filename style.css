@@ -9,7 +9,19 @@ canvas { image-rendering: pixelated; max-width: 100%; height: auto; border: 4px 
 #help { font-size: 12px; color: #998; margin: 8px 0 0; text-align: center; }
 #melhorias { margin: 8px 0 0 8px; font-family: monospace; font-size: 16px; font-weight: bold; background: #4a3820; color: #ffd84c; border: 3px solid #ffd84c; padding: 8px 20px; cursor: pointer; }
 #melhorias:disabled { background: #333; border-color: #555; color: #888; cursor: default; }
+#jogador { margin: 8px 0 0 8px; font-family: monospace; font-size: 16px; font-weight: bold; background: #1c2a44; color: #6fd6ff; border: 3px solid #6fd6ff; padding: 8px 20px; cursor: pointer; }
+#jogador:disabled { background: #333; border-color: #555; color: #888; cursor: default; }
 [hidden] { display: none !important; }
+#menu { position: fixed; inset: 0; background: #14110f; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; z-index: 6; }
+#menu h1 { color: #ffd84c; font-size: 40px; margin: 0 0 16px; text-shadow: 4px 4px 0 #5a4630; }
+#menu button { width: 280px; font-family: monospace; font-size: 18px; font-weight: bold; background: #2a2018; color: #eee; border: 3px solid #5a4630; padding: 12px; cursor: pointer; }
+#menu #mJogar { background: #2a6a2a; border-color: #6fd66f; color: #fff; }
+#menu #mMelhorias { background: #4a3820; border-color: #ffd84c; color: #ffd84c; }
+#menu #lista { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 400px; }
+#menu #lista button { width: auto; font-size: 14px; padding: 6px 12px; }
+#quem { color: #6fd6ff; font-size: 18px; }
+#novo { display: flex; flex-direction: column; gap: 8px; align-items: center; color: #ddd; }
+#nome { width: 260px; font-family: monospace; font-size: 18px; text-align: center; background: #10161e; color: #fff; border: 3px solid #6fd6ff; padding: 8px; }
 #meta { position: fixed; inset: 0; background: #14110f; overflow: auto; display: flex; flex-direction: column; align-items: center; padding: 16px; z-index: 5; }
 #meta h2 { color: #ffd84c; margin: 8px 0; }
 #perks { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; width: min(760px, 100%); margin: 10px 0 16px; }
