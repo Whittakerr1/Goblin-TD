@@ -13,6 +13,7 @@ canvas { image-rendering: pixelated; max-width: 100%; height: auto; border: 4px 
 #meta { position: fixed; inset: 0; background: #14110f; overflow: auto; display: flex; flex-direction: column; align-items: center; padding: 16px; z-index: 5; }
 #meta h2 { color: #ffd84c; margin: 8px 0; }
 #perks { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; width: min(760px, 100%); margin: 10px 0 16px; }
+#resetar { margin-top: 8px; padding: 8px 16px; font: inherit; background: #5a1c14; color: #fff; border: 3px solid #c8402c; cursor: pointer; }
 #tree { image-rendering: pixelated; max-width: 100%; height: auto; border: 4px solid #3a2e24; cursor: pointer; }
 #perks button, #fechar { font-family: monospace; font-size: 13px; background: #2a2018; color: #eee; border: 3px solid #5a4630; padding: 10px; cursor: pointer; text-align: left; }
 #perks button:disabled { opacity: .45; cursor: default; }
