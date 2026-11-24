@@ -33,6 +33,9 @@ function salvarMeta() {
     const l = jogadores(); if (!l.includes(JOGADOR)) { l.push(JOGADOR); localStorage.setItem('goblintd_jogadores', JSON.stringify(l)); }
   } catch (e) {}
 }
+// Versão do cadastro de nomes: subir VER_NOME faz todo mundo digitar o nome de novo (o progresso salvo de cada nome é mantido)
+const VER_NOME = 1;
+if (lerLS('goblintd_vnome', 0) < VER_NOME) { try { localStorage.removeItem('goblintd_atual'); localStorage.setItem('goblintd_vnome', JSON.stringify(VER_NOME)); } catch (e) {} }
 // migra o save antigo (único) para o jogador padrão, uma só vez
 (function () {
   const velho = lerLS('goblintd_meta', null);
@@ -66,8 +69,10 @@ const bg = document.createElement('canvas'); bg.width = CFG.W; bg.height = CFG.H
 
 function reset() {
   S = { run: 0, hp: CFG.baseHp + ef('vida'), kills: 0, ganho: 0, wave: 0, gob: [], tow: [], proj: [], part: [], groups: [],
-        sel: 'arqueiro', over: false, won: false, pause: false, speed: 1, t: 0, mx: 0, my: 0, ativa: false, prox: 300, aim: null };
+        sel: 'arqueiro', over: false, won: false, pause: false, speed: (S && S.speed) || 1, t: 0, mx: 0, my: 0, ativa: false, prox: 300, aim: null };
   S.plano = planoHorda();
+  // restaura as torres salvas ao fim da última run (respeitando unidades liberadas e vagas)
+  for (const t of META.torres || []) if (TOWERS[t.k] && livre(t.k) && !cheio(t.k)) S.tow.push({ x: t.x, y: t.y, def: TOWERS[t.k], k: t.k, lvl: t.lvl || 1, cd: 0, dir: t.dir, cone: t.cone, sw: 0, sd: 1 });
   buildShop();
 }
 
@@ -133,7 +138,7 @@ const baseDist = (x, y) => Math.hypot(CFG.baseX - x, CFG.baseY - y);
 function arcFx(x, y, r, a0, a1, c1, c2) {
   for (let a = a0; a <= a1; a += 6 / r) S.part.push({ x: x + Math.cos(a) * r, y: y + Math.sin(a) * r, vx: 0, vy: 0, life: 14, max: 14, c1, c2 });
 }
-const mkProj = (t, ang, st, def) => ({ x: t.x, y: t.y, vx: Math.cos(ang) * def.vel, vy: Math.sin(ang) * def.vel, def, dano: st.dano, raio: def.raio ? def.raio * (1 + ef('can_raio')) : 0, rest: st.alc });
+const mkProj = (t, ang, st, def) => ({ x: t.x, y: t.y, vx: Math.cos(ang) * def.vel, vy: Math.sin(ang) * def.vel, def, dano: st.dano, raio: def.raio ? def.raio * (1 + ef('can_raio')) : 0, rest: st.alc, furo: def.tipo === 'flecha' ? pk('arq_dano') : 0 });
 
 // Torres não miram: varrem o cone (ponta a ponta, ida e volta) e atiram em linha reta; só disparam se houver goblin dentro do cone
 function fire(t) {
@@ -162,9 +167,10 @@ function updateTowers() {
     let tg = null; const ci = ((p.x / CELL) | 0) + 1 + ((p.y / CELL) | 0) * COLS;
     hitSearch: for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
       const c = GRID && GRID[ci + ox + oy * COLS]; if (!c) continue;
-      for (const g of c) if (!g.dead && Math.hypot(g.x - p.x, g.y - p.y) < g.r + 3) { tg = g; break hitSearch; }
+      for (const g of c) if (!g.dead && !(p.vis && p.vis.has(g)) && Math.hypot(g.x - p.x, g.y - p.y) < g.r + 3) { tg = g; break hitSearch; }
     }
-    if (tg || p.rest <= 0) {
+    if (tg && p.furo > 0) { hit(tg, p.dano); p.furo--; (p.vis = p.vis || new Set()).add(tg); } // perfuração: atravessa e segue
+    else if (tg || p.rest <= 0) {
       p.done = true;
       if (p.def.tipo === 'flecha') { if (tg) hit(tg, p.dano); }
       else {
@@ -211,7 +217,7 @@ function updateGoblins() {
   S.gob = S.gob.filter(g => !g.dead);
 }
 
-function pagar() { S.pago = true; S.ganho = moedasGanhas(S.kills); META.moedas += S.ganho; salvarMeta(); }
+function pagar() { S.pago = true; S.ganho = moedasGanhas(S.kills); META.moedas += S.ganho; META.torres = S.tow.map(t => ({ k: t.k, x: t.x, y: t.y, lvl: t.lvl, dir: t.dir, cone: t.cone })); salvarMeta(); }
 function update() {
   S.t++;
   for (const gr of S.groups) { gr.delay--; if (gr.delay <= 0) { spawnGroup(gr); gr.done = true; } }
@@ -410,7 +416,7 @@ function buildMeta() {
 }
 btnMeta.onclick = () => { if (!btnMeta.disabled) { buildMeta(); metaEl.hidden = false; } btnMeta.blur(); };
 const menuEl = document.getElementById('menu'), nomeEl = document.getElementById('nome'), btnJog = document.getElementById('jogador');
-let pedindo = !jogadores().length; // primeira vez: pede o nome
+let pedindo = !lerLS('goblintd_atual', null); // sem jogador atual (primeira vez ou nomes resetados): pede o nome
 const limpaNome = s => (s || '').trim().slice(0, 12).replace(/[^\w\u00C0-\u017F -]/g, '');
 function renderMenu() {
   const quem = menuEl.querySelector('#quem');
@@ -428,6 +434,8 @@ menuEl.querySelector('#mJogar').onclick = () => { if (nomeOk()) { menuEl.hidden 
 menuEl.querySelector('#mMelhorias').onclick = () => { if (nomeOk()) { menuEl.hidden = true; buildMeta(); metaEl.hidden = false; } };
 nomeEl.onkeydown = e => { if (e.key === 'Enter') menuEl.querySelector('#mJogar').click(); };
 btnJog.onclick = () => { abrirMenu(); btnJog.blur(); };
+const velBtns = document.querySelectorAll('#vel button');
+velBtns.forEach(b => b.onclick = () => { S.speed = +b.dataset.v; b.blur(); });
 const btnStart = document.getElementById('start');
 btnStart.onclick = () => { if (!S.ativa) startWave(); btnStart.blur(); };
 reset();
@@ -438,6 +446,7 @@ abrirMenu();
   btnStart.disabled = !!S.wave || S.over;
   btnMeta.hidden = !S.over;
   btnJog.disabled = S.ativa;
+  velBtns.forEach(b => b.classList.toggle('sel', +b.dataset.v === S.speed));
   if (!S.pause && !S.over && menuEl.hidden) for (let i = 0; i < S.speed; i++) update();
   draw(); requestAnimationFrame(loop);
 })();

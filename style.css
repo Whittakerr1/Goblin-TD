@@ -4,6 +4,9 @@ canvas { image-rendering: pixelated; max-width: 100%; height: auto; border: 4px 
 #shop button { font-family: monospace; font-size: 14px; background: #2a2018; color: #eee; border: 3px solid #5a4630; padding: 6px 12px; cursor: pointer; }
 #shop button.sel { border-color: #ffd84c; background: #4a3820; }
 #shop button:disabled { opacity: .45; cursor: default; }
+#vel { display: flex; gap: 8px; margin-top: 8px; }
+#vel button { font-family: monospace; font-size: 14px; font-weight: bold; background: #2a2018; color: #eee; border: 3px solid #5a4630; padding: 6px 16px; cursor: pointer; }
+#vel button.sel { border-color: #ffd84c; background: #4a3820; color: #ffd84c; }
 #start { margin-top: 8px; font-family: monospace; font-size: 16px; font-weight: bold; background: #2a6a2a; color: #fff; border: 3px solid #6fd66f; padding: 8px 20px; cursor: pointer; }
 #start:disabled { background: #333; border-color: #555; color: #888; cursor: default; }
 #help { font-size: 12px; color: #998; margin: 8px 0 0; text-align: center; }
