@@ -471,8 +471,9 @@ const metaEl = document.getElementById('meta'), btnMeta = document.getElementByI
 // fundo do mar da skill tree (pré-renderizado) e raiz
 const SEA = document.createElement('canvas'); SEA.width = CFG.W; SEA.height = TREE_H;
 (function () {
-  const b = SEA.getContext('2d'); b.fillStyle = '#0f3552'; b.fillRect(0, 0, CFG.W, TREE_H); b.fillStyle = '#174a6e';
-  for (let i = 0; i < 1250; i++) b.fillRect(q((i * 97) % CFG.W), q((i * 53 + (i * i) % 211) % TREE_H), 6 + (i % 3) * 2, 2);
+  const b = SEA.getContext('2d'); b.fillStyle = '#08101c'; b.fillRect(0, 0, CFG.W, TREE_H); b.fillStyle = '#0b1626';
+  for (let y = 0; y < TREE_H; y += 32) for (let x = 0; x < CFG.W; x += 32) if ((x + y) / 32 % 2 === 0) b.fillRect(x, y, 32, 32);
+  for (let i = 0; i < 260; i++) { b.fillStyle = i % 5 ? '#1a2e4a' : '#3a5a86'; b.fillRect(q((i * 97) % CFG.W), q((i * 53 + (i * i) % 211) % TREE_H), 2, 2); }
 })();
 let TC, treeHover = null;
 const aberto = id => { const p = TREE[id].pai; return !p || !!ROOTS[p] || pk(p) > 0; };
@@ -482,39 +483,71 @@ function buyPerk(id) {
   if (!aberto(id) || l >= p.mx || META.moedas < c) return;
   META.moedas -= c; META.lv[id] = l + 1; salvarMeta();
 }
-function tline(t, x0, y0, x1, y1, c) {
-  t.fillStyle = c; const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) / 2;
-  for (let i = 0; i <= n; i++) t.fillRect(q(x0 + (x1 - x0) * i / n), q(y0 + (y1 - y0) * i / n), 2, 2);
+// ligações em ângulo reto (blocos sólidos): w = meia espessura (4 = contorno, 2 = miolo)
+function tseg(t, x0, y0, x1, y1, c, w) {
+  const xa = q(Math.min(x0, x1)), ya = q(Math.min(y0, y1));
+  t.fillStyle = c; t.fillRect(xa - w, ya - w, q(Math.abs(x1 - x0)) + 2 * w, q(Math.abs(y1 - y0)) + 2 * w);
 }
+function tlink(t, p, n, c, w) {
+  if (p.x === n.x || p.y === n.y) return tseg(t, p.x, p.y, n.x, n.y, c, w);
+  const m = n.y - 48; tseg(t, p.x, p.y, p.x, m, c, w); tseg(t, p.x, m, n.x, m, c, w); tseg(t, n.x, m, n.x, n.y, c, w);
+}
+// ladrilho com chanfro: E = [borda clara, borda escura, fundo]
+function ttile(t, x, y, s, E) {
+  const X = q(x - s / 2), Y = q(y - s / 2);
+  t.fillStyle = '#05080f'; t.fillRect(X - 2, Y - 2, s + 4, s + 4); t.fillStyle = E[1]; t.fillRect(X, Y, s, s);
+  t.fillStyle = E[0]; t.fillRect(X, Y, s - 2, 2); t.fillRect(X, Y, 2, s - 2); t.fillStyle = E[2]; t.fillRect(X + 4, Y + 4, s - 8, s - 8);
+}
+const TSTATE = { on: ['#fff0a0', '#a08010', '#2e2410'], ok: ['#b8ffb8', '#2a7a2a', '#102418'], sem: ['#c8a060', '#6a4a20', '#1c1810'], off: ['#3a5272', '#0c1826', '#08101a'], hv: ['#ffffff', '#8a8a8a', '#202830'] };
 function ttx(t, s, x, y, c, al, f) {
   t.font = f || 'bold 10px monospace'; t.textAlign = al || 'center'; t.fillStyle = '#08101a';
   for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) t.fillText(s, x + dx, y + dy);
   t.fillStyle = c; t.fillText(s, x, y);
 }
 function drawTree() {
-  const t = TC.getContext('2d'), nb = (x, y, s, c) => { t.fillStyle = c; t.fillRect(q(x - s / 2), q(y - s / 2), s, s); };
+  const t = TC.getContext('2d'), ES = TSTATE;
   t.drawImage(SEA, 0, 0);
-  for (const k in ROOTS) { const r = ROOTS[k]; if (r.pai) tline(t, ROOTS[r.pai].x, ROOTS[r.pai].y, r.x, r.y, '#8acc4a'); }
-  for (const id in TREE) { const n = TREE[id], p = ponto(n.pai); tline(t, p.x, p.y, n.x, n.y, pk(id) > 0 ? '#8acc4a' : aberto(id) ? '#4a9a3a' : '#1c3a56'); }
-  for (const k in ROOTS) { const r = ROOTS[k]; nb(r.x, r.y, 48, '#6a9a4a'); nb(r.x, r.y, 40, '#2a4220'); ttx(t, r.ic, r.x, r.y + 4, '#ffffff', 'center', 'bold 13px monospace'); ttx(t, r.nome, r.x, r.y + 40, '#ffffff'); }
+  ttx(t, 'ÁRVORE DE MELHORIAS', 600, 44, '#ffd84c', 'center', 'bold 22px monospace');
+  ttx(t, `${META.moedas} moedas disponíveis`, 600, 66, '#cccccc', 'center', '12px monospace');
+  // um painel por torre (cabeçalho com o nome; apagado enquanto a torre está bloqueada)
+  for (const [k, , x, y] of CADEIA) {
+    const on = livre(k), px = x - 114, py = y - 60, h = 350;
+    t.fillStyle = '#05080f'; t.fillRect(px - 4, py - 4, 236, h + 8);
+    t.fillStyle = on ? TOWERS[k].cor2 : '#1c3a56'; t.fillRect(px - 2, py - 2, 232, h + 4);
+    t.fillStyle = '#0a1828'; t.fillRect(px, py, 228, h);
+    t.fillStyle = on ? TOWERS[k].cor2 : '#14283e'; t.fillRect(px, py, 228, 20);
+    ttx(t, TOWERS[k].nome.toUpperCase() + (on ? '' : ' · BLOQUEADA'), px + 8, py + 14, on ? '#ffffff' : '#7a8a9a', 'left');
+  }
+  // ligações: primeiro todos os contornos, depois os mioleos
+  const L = [];
+  for (const k in ROOTS) { const r = ROOTS[k]; if (r.pai) L.push([ROOTS[r.pai], r, '#ffd84c']); }
+  for (const id in TREE) { const n = TREE[id]; L.push([ponto(n.pai), n, pk(id) > 0 ? '#ffd84c' : aberto(id) ? '#6fd66f' : '#243a52']); }
+  for (const [p, n] of L) tlink(t, p, n, '#05080f', 4);
+  for (const [p, n, c] of L) tlink(t, p, n, c, 2);
+  for (const k in ROOTS) { const r = ROOTS[k]; ttile(t, r.x, r.y, 48, ES.on); ttx(t, r.ic, r.x, r.y + 5, '#ffffff', 'center', 'bold 13px monospace'); if (k !== 'ARQ') ttx(t, r.nome, r.x, r.y + 42, '#ffffff'); }
   for (const id in TREE) {
     const n = TREE[id], p = PERKS[id], l = pk(id), ab = aberto(id), max = l >= p.mx, c = custoPerk(p, l), ok = ab && !max && META.moedas >= c, vis = ab || l > 0;
-    nb(n.x, n.y, 48, id === treeHover ? '#ffffff' : l > 0 ? '#ffd84c' : ab ? (ok ? '#6fd66f' : '#8a6a3c') : '#0a1420');
-    nb(n.x, n.y, 40, vis ? '#2a2018' : '#08101a');
-    if (!vis) continue;
+    ttile(t, n.x, n.y, 44, id === treeHover ? ES.hv : l > 0 ? ES.on : ab ? (ok ? ES.ok : ES.sem) : ES.off);
+    if (!vis) { ttx(t, '?', n.x, n.y + 5, '#2a3a52', 'center', 'bold 13px monospace'); continue; }
     ttx(t, n.ic, n.x, n.y + 5, n.cor, 'center', 'bold 13px monospace');
     const x0 = q(n.x - p.mx * 3);
-    for (let i = 0; i < p.mx; i++) { t.fillStyle = l > i ? '#ffd84c' : '#10161e'; t.fillRect(x0 + i * 6, n.y + 28, 4, 4); }
+    for (let i = 0; i < p.mx; i++) { t.fillStyle = '#05080f'; t.fillRect(x0 + i * 6 - 1, n.y + 26, 6, 6); t.fillStyle = l > i ? '#ffd84c' : '#243a52'; t.fillRect(x0 + i * 6, n.y + 27, 4, 4); }
     ttx(t, p.n.toUpperCase(), n.x, n.y + 46, '#ffffff');
     if (max) ttx(t, 'MÁX', n.x, n.y - 29, '#ffd84c', 'center');
-    else if (ab) { nb(n.x + 30, n.y - 29, 6, '#ffffff'); ttx(t, String(c), n.x + 36, n.y - 26, ok ? '#6fd66f' : '#ff6060', 'left'); }
+    else if (ab) {
+      const s = String(c), w = s.length * 6 + 14, X = q(n.x - w / 2);
+      t.fillStyle = '#05080f'; t.fillRect(X - 2, n.y - 40, w + 4, 14); t.fillStyle = ok ? '#1c4a1c' : '#4a1c1c'; t.fillRect(X, n.y - 38, w, 10);
+      t.fillStyle = '#ffd84c'; t.fillRect(X + 4, n.y - 35, 4, 4); ttx(t, s, X + 12, n.y - 30, ok ? '#9fff9f' : '#ff8a8a', 'left');
+    }
   }
+  // legenda
+  [['COMPRADO', ES.on], ['DISPONÍVEL', ES.ok], ['SEM MOEDAS', ES.sem], ['BLOQUEADO', ES.off]].forEach(([s, E], i) => { const x = 250 + i * 150; ttile(t, x, 905, 12, E); ttx(t, s, x + 12, 909, '#cccccc', 'left', '10px monospace'); });
   // moedas (cabeçalho fixo do painel)
   const mc = metaEl.querySelector('#mcoins'); if (mc) mc.textContent = `MOEDAS ${META.moedas}` + (S.ganho ? `  (+${S.ganho} na última run)` : '');
   // dica do nó (ao lado do nó, para aparecer onde o mouse está)
   if (treeHover) {
     const p = PERKS[treeHover], l = pk(treeHover), nn = TREE[treeHover], ox = Math.max(8, Math.min(CFG.W - 428, nn.x - 210)), oy = nn.y + 134 > TREE_H ? nn.y - 150 : nn.y + 62;
-    t.fillStyle = '#1c2a44'; t.fillRect(ox, oy, 420, 64); t.fillStyle = '#10161e'; t.fillRect(ox + 4, oy + 4, 412, 56);
+    t.fillStyle = '#05080f'; t.fillRect(ox - 4, oy - 4, 428, 72); t.fillStyle = nn.cor; t.fillRect(ox - 2, oy - 2, 424, 68); t.fillStyle = '#0a1828'; t.fillRect(ox, oy, 420, 64);
     ttx(t, `${p.n} · Nv ${l}/${p.mx}`, ox + 14, oy + 24, '#ffffff', 'left', 'bold 14px monospace');
     ttx(t, p.d, ox + 14, oy + 42, '#cccccc', 'left', '12px monospace');
     ttx(t, aberto(treeHover) ? (l >= p.mx ? 'Nível máximo' : `Custo: ${custoPerk(p, l)} moedas`) : `Bloqueado: requer ${PERKS[TREE[treeHover].pai].n}`, ox + 14, oy + 56, aberto(treeHover) ? '#ffd84c' : '#ff6060', 'left', '12px monospace');
