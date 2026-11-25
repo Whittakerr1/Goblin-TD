@@ -12,7 +12,8 @@ const ONDAS = (mix, chefe = []) => [
 ].map((o, i) => ({ ...o, peso0: mix[i][0], peso1: mix[i][1], chefe: chefe[i] }));
 
 // Mapas em ordem de dificuldade (o próximo só abre depois de vencer o anterior). Campos opcionais:
-//   rotas (várias entradas) · bloq [x,y,w,h] (sem torres) · mod.alc (neblina) · perigos (gêiseres que atordoam torres) · dif (escala própria) · tema · desafio (texto do HUD)
+//   rotas (várias entradas, cada uma começa fora da tela) · bloq [x,y,w,h] (sem torres) · muros [x,y,w,h] (sem torres e barram flechas/virotes) · nevoas {x,y,r,f} (alcance ×f nas torres dentro) ·
+//   perigos (gêiseres que atordoam torres) · tempestade {per,stun} (raio atordoa torre aleatória) · dif (escala própria) · tema · desafio (texto do HUD)
 const MAPAS = [{
   nome: 'Campina', nivel: 1, larg: 72, desafio: 'Sem desafios · aprenda o básico',
   // Run de 6 min = 3 ondas de 2 min (dur em segundos), sem intervalo entre elas.
@@ -25,69 +26,95 @@ const MAPAS = [{
   ],
   pontos: [[-60, 100], [200, 100], [200, 480], [450, 480], [450, 200], [700, 200], [700, CFG.baseY], [CFG.baseX, CFG.baseY]],
 },
-{ nome: 'Floresta', nivel: 2, larg: 64, desafio: 'Neblina -15% alcance · Blindados',
+{ nome: 'Floresta', nivel: 2, larg: 60, desafio: 'Duas entradas · Neblina nas clareiras',
   tema: { g: ['#24502a', '#204824', '#2e6030'], p: ['#4a3a28', '#7a6040', '#6a5238'], ob: ['#102a10', '#1e4a1e'] },
-  mod: { alc: 0.85 }, dif: { qtd: 1.1, hp: 1.4, vel: 1.03 },
-  bloq: [[215, 215, 90, 140], [440, 230, 90, 110], [660, 330, 60, 70], [400, 500, 220, 70]],
+  dif: { qtd: 1.1, hp: 1.4, vel: 1.03 },
+  nevoas: [{ x: 310, y: 310, r: 80, f: 0.6 }, { x: 640, y: 420, r: 80, f: 0.6 }],
+  bloq: [[270, 250, 80, 90], [470, 100, 80, 60], [480, 380, 130, 60], [800, 390, 90, 80]],
   ondas: ONDAS([
     [{ comum: 1, rapido: .2, blindado: .05 }, { comum: .8, rapido: .3, bruto: .05, blindado: .15 }],
     [{ comum: .7, rapido: .4, bruto: .1, blindado: .25 }, { comum: .5, rapido: .4, bruto: .2, blindado: .4 }],
     [{ comum: .5, rapido: .4, bruto: .2, blindado: .4 }, { comum: .35, rapido: .35, bruto: .3, blindado: .55 }],
   ]),
-  rotas: [[[-60, 160], [160, 160], [160, 430], [360, 430], [360, 150], [600, 150], [600, 450], [780, 450], [780, CFG.baseY], [CFG.baseX, CFG.baseY]]] },
-{ nome: 'Pântano', nivel: 3, larg: 64, desafio: 'Gêiseres param torres · Xamãs curam',
+  rotas: [
+    [[-60, 170], [200, 170], [200, 440], [420, 440], [420, 300], [CFG.baseX, CFG.baseY]],
+    [[600, -60], [600, 190], [760, 190], [760, CFG.baseY], [CFG.baseX, CFG.baseY]],
+  ] },
+{ nome: 'Pântano', nivel: 3, larg: 64, desafio: 'Três entradas · Gêiseres · Xamãs curam',
   tema: { g: ['#3a5a2c', '#34502a', '#4a6a34'], p: ['#3a2e20', '#6a5a3a', '#5a4a30'], ob: ['#1a2a18', '#2e4a28'] },
   dif: { qtd: 1.2, hp: 1.8, vel: 1.05 },
+  bloq: [[20, 200, 110, 150], [430, 490, 190, 70], [60, 545, 140, 55]],
   perigos: [
-    { x: 310, y: 290, r: 56, per: 480, off: 0,   stun: 240, cor: '#3a2a4a', cor2: '#8a5aaa' },
-    { x: 530, y: 290, r: 56, per: 480, off: 240, stun: 240, cor: '#3a2a4a', cor2: '#8a5aaa' },
-    { x: 720, y: 250, r: 50, per: 480, off: 120, stun: 240, cor: '#3a2a4a', cor2: '#8a5aaa' },
+    { x: 280, y: 215, r: 58, per: 480, off: 0,   stun: 240, cor: '#3a2a4a', cor2: '#8a5aaa' },
+    { x: 490, y: 215, r: 52, per: 480, off: 240, stun: 240, cor: '#3a2a4a', cor2: '#8a5aaa' },
+    { x: 650, y: 420, r: 58, per: 480, off: 120, stun: 240, cor: '#3a2a4a', cor2: '#8a5aaa' },
   ],
   ondas: ONDAS([
     [{ comum: 1, rapido: .2, xama: .03 }, { comum: .8, rapido: .3, bruto: .05, xama: .08 }],
     [{ comum: .7, rapido: .4, bruto: .15, xama: .1, blindado: .1 }, { comum: .5, rapido: .4, bruto: .25, xama: .18, blindado: .15 }],
     [{ comum: .5, rapido: .4, bruto: .25, xama: .18, blindado: .2 }, { comum: .35, rapido: .35, bruto: .35, xama: .25, blindado: .25 }],
   ]),
-  rotas: [[[-60, 500], [200, 500], [200, 150], [420, 150], [420, 430], [640, 430], [640, 150], [800, 150], [800, CFG.baseY], [CFG.baseX, CFG.baseY]]] },
-{ nome: 'Desfiladeiro', nivel: 4, larg: 56, desafio: 'Morcegos voam direto ao castelo',
+  rotas: [
+    [[-60, 130], [180, 130], [180, 330], [380, 330], [380, 130], [600, 130], [600, 300], [CFG.baseX, CFG.baseY]],
+    [[-60, 500], [300, 500], [300, 430], [500, 430], [500, 300], [CFG.baseX, CFG.baseY]],
+    [[780, 660], [780, 430], [CFG.baseX, 430], [CFG.baseX, CFG.baseY]],
+  ] },
+{ nome: 'Desfiladeiro', nivel: 4, larg: 56, desafio: 'Muralhas barram flechas · Morcegos de 2 lados',
   tema: { g: ['#5a5a62', '#52525a', '#6a6a74'], p: ['#34343c', '#78787e', '#68686e'], ob: ['#2a2a30', '#4a4a54'] },
   dif: { qtd: 1.3, hp: 2.2, vel: 1.07 },
-  bloq: [[230, 240, 100, 120], [440, 230, 100, 110], [0, 520, 170, 80], [600, 520, 200, 80]],
+  bloq: [[0, 520, 130, 80], [760, 520, 200, 80]],
+  muros: [[432, 200, 24, 110], [196, 300, 100, 24], [640, 210, 24, 100], [560, 450, 24, 50]],
   ondas: ONDAS([
     [{ comum: .9, rapido: .2, morcego: .15 }, { comum: .7, rapido: .3, bruto: .05, morcego: .3 }],
     [{ comum: .6, rapido: .4, bruto: .15, morcego: .35, blindado: .1 }, { comum: .45, rapido: .4, bruto: .25, morcego: .5, blindado: .2 }],
     [{ comum: .45, rapido: .4, bruto: .25, morcego: .5, xama: .1, blindado: .25 }, { comum: .3, rapido: .35, bruto: .35, morcego: .65, xama: .15, blindado: .3 }],
   ]),
-  rotas: [[[-60, 430], [170, 430], [170, 140], [390, 140], [390, 470], [590, 470], [590, 170], [770, 170], [770, CFG.baseY], [CFG.baseX, CFG.baseY]]] },
-{ nome: 'Ruínas', nivel: 5, larg: 60, desafio: 'Duas rotas · Sapadores sabotam torres',
+  rotas: [
+    [[-60, 460], [140, 460], [140, 150], [340, 150], [340, 380], [560, 380], [560, 150], [760, 150], [760, 300], [CFG.baseX, CFG.baseY]],
+    [[420, 660], [420, 540], [700, 540], [700, 440], [840, 440], [840, CFG.baseY], [CFG.baseX, CFG.baseY]],
+  ] },
+{ nome: 'Ruínas', nivel: 5, larg: 60, desafio: 'Três rotas cruzadas · Sapadores · Muralhas',
   tema: { g: ['#8a7a4a', '#827244', '#9a8a56'], p: ['#5a4a30', '#b8a070', '#a89060'], ob: ['#4a4030', '#7a6c50'] },
   dif: { qtd: 1.4, hp: 2.7, vel: 1.09 },
-  bloq: [[540, 220, 50, 40], [540, 340, 50, 40], [700, 220, 50, 40], [700, 340, 50, 40]],
+  bloq: [[130, 300, 60, 60], [520, 390, 50, 50], [800, 150, 60, 60], [700, 400, 60, 60]],
+  muros: [[300, 200, 90, 22], [660, 340, 22, 60], [120, 200, 100, 22]],
+  nevoas: [{ x: 140, y: 380, r: 65, f: 0.65 }, { x: 700, y: 100, r: 70, f: 0.65 }],
   ondas: ONDAS([
     [{ comum: .9, rapido: .3, sapador: .05 }, { comum: .7, rapido: .4, bruto: .05, sapador: .12 }],
     [{ comum: .6, rapido: .4, bruto: .15, sapador: .18, blindado: .15 }, { comum: .45, rapido: .4, bruto: .25, sapador: .28, blindado: .25 }],
     [{ comum: .45, rapido: .4, bruto: .25, sapador: .3, blindado: .25, morcego: .2 }, { comum: .3, rapido: .35, bruto: .35, sapador: .4, blindado: .3, morcego: .3 }],
   ]),
   rotas: [
-    [[-60, 150], [300, 150], [300, 300], [CFG.baseX, CFG.baseY]],
-    [[-60, 450], [300, 450], [300, 300], [CFG.baseX, CFG.baseY]],
+    [[-60, 140], [260, 140], [260, 360], [480, 360], [480, 200], [720, 200], [720, 300], [CFG.baseX, CFG.baseY]],
+    [[-60, 480], [380, 480], [380, 260], [620, 260], [620, 300], [CFG.baseX, CFG.baseY]],
+    [[560, -60], [560, 300], [CFG.baseX, CFG.baseY]],
   ] },
-{ nome: 'Covil do Rei', nivel: 6, larg: 56, desafio: 'Chefe invoca hordas · tudo junto',
+{ nome: 'Covil do Rei', nivel: 6, larg: 56, desafio: 'Quatro entradas · Raios · Lava · Chefe',
   tema: { g: ['#3a2030', '#341c2a', '#4a2a3c'], p: ['#1c0e16', '#6a3030', '#5a2828'], ob: ['#1a0c14', '#3a1c2a'] },
   dif: { qtd: 1.5, hp: 3.3, vel: 1.1 },
+  bloq: [[60, 230, 110, 170], [380, 520, 100, 50], [430, 420, 90, 50], [780, 540, 120, 50]],
+  muros: [[330, 200, 22, 70], [680, 176, 70, 22], [700, 340, 22, 90]],
+  nevoas: [{ x: 150, y: 560, r: 60, f: 0.6 }],
+  tempestade: { per: 360, stun: 300 },
   perigos: [
-    { x: 415, y: 300, r: 52, per: 420, off: 0,   stun: 240, cor: '#5a1810', cor2: '#e05020' },
-    { x: 605, y: 300, r: 52, per: 420, off: 210, stun: 240, cor: '#5a1810', cor2: '#e05020' },
+    { x: 400, y: 225, r: 50, per: 420, off: 0,   stun: 240, cor: '#5a1810', cor2: '#e05020' },
+    { x: 740, y: 215, r: 52, per: 420, off: 140, stun: 240, cor: '#5a1810', cor2: '#e05020' },
+    { x: 760, y: 395, r: 52, per: 420, off: 280, stun: 240, cor: '#5a1810', cor2: '#e05020' },
   ],
   ondas: ONDAS([
     [{ comum: .8, rapido: .3, blindado: .1, xama: .05 }, { comum: .6, rapido: .4, bruto: .1, blindado: .2, xama: .1, morcego: .15 }],
     [{ comum: .5, rapido: .4, bruto: .2, blindado: .3, xama: .15, morcego: .3, sapador: .15 }, { comum: .4, rapido: .4, bruto: .3, blindado: .4, xama: .2, morcego: .4, sapador: .25 }],
     [{ comum: .4, rapido: .4, bruto: .3, blindado: .4, xama: .2, morcego: .4, sapador: .25 }, { comum: .3, rapido: .3, bruto: .4, blindado: .5, xama: .25, morcego: .5, sapador: .35 }],
   ], [0, 90, 100]),
-  rotas: [[[-60, 300], [130, 300], [130, 130], [320, 130], [320, 470], [510, 470], [510, 130], [700, 130], [700, 470], [820, 470], [820, CFG.baseY], [CFG.baseX, CFG.baseY]]] },
+  rotas: [
+    [[-60, 150], [220, 150], [220, 300], [CFG.baseX, CFG.baseY]],
+    [[-60, 470], [300, 470], [300, 380], [620, 380], [620, 300], [CFG.baseX, CFG.baseY]],
+    [[560, -60], [560, 130], [CFG.baseX, 130], [CFG.baseX, CFG.baseY]],
+    [[560, 660], [560, 480], [CFG.baseX, 480], [CFG.baseX, CFG.baseY]],
+  ] },
 ];
 let MAPA = MAPAS[0];
-MAPAS.forEach(m => { m.rotas = m.rotas || [m.pontos]; m.bloq = m.bloq || []; m.perigos = m.perigos || []; m.mod = m.mod || {}; });
+MAPAS.forEach(m => { m.rotas = m.rotas || [m.pontos]; m.bloq = m.bloq || []; m.muros = m.muros || []; m.nevoas = m.nevoas || []; m.perigos = m.perigos || []; m.mod = m.mod || {}; });
 
 const TOWERS = {
   arqueiro: { nome: 'Arqueiro', custo: 50,  dano: 7,  cd: 28, alcance: 130, tipo: 'flecha', vel: 7, cor: '#c8903c', cor2: '#7a5420', cone: 70 },
@@ -97,7 +124,7 @@ const TOWERS = {
   // chamas: curto alcance, queimadura (ignora armadura, impede cura) · veneno: poça no chão (dano fixo + % da vida, ignora armadura, não acumula) · totem: sem ataque, aura de dano/cadência
   balista:  { nome: 'Balista',  dano: 30, cd: 100, alcance: 220, tipo: 'lanca',  vel: 10, multi: true, cor: '#b0b0c0', cor2: '#505068', cone: 22 },
   tesla:    { nome: 'Tesla',    dano: 7,  cd: 45,  alcance: 115, tipo: 'raio',   cadeia: 5, elo: 44, cor: '#ffe84c', cor2: '#a08010', cone: 80 },
-  chamas:   { nome: 'Chamas',   dano: 2,  cd: 8,   alcance: 62,  tipo: 'fogo',   queima: 90, cor: '#ff7a1c', cor2: '#a03a08', cone: 50 },
+  chamas:   { nome: 'Chamas',   dano: 2,  cd: 12,  alcance: 54,  tipo: 'fogo',   queima: 75, queimaD: 0.5, cor: '#ff7a1c', cor2: '#a03a08', cone: 50 },
   veneno:   { nome: 'Alquimista', dano: 1, cd: 160, alcance: 150, tipo: 'poca',  vel: 3.2, raio: 42, dur: 270, tick: 15, pct: 0.01, cor: '#6ae04c', cor2: '#2a8a28', cone: 36 },
   totem:    { nome: 'Totem',    dano: 0,  cd: 0,   alcance: 105, tipo: 'aura',   buffD: 0.25, buffC: 0.15, cor: '#e04ca0', cor2: '#802060', cone: 0 },
 };
@@ -141,45 +168,54 @@ const PERKS = {
 // (R=1 nas 1ªs melhorias, ~0.6 no meio, ~0.5 no fim, ~3 para liberar torre).
 const CUSTOS = {
   arq_cad:  [2, 3, 4, 10, 160],      arq_dano: [3, 4, 5, 10, 170],      arq_alc:  [3, 4, 9, 11, 180],
-  can_cad:  [240, 240, 240, 265, 280], can_dano: [240, 240, 240, 270, 300], can_alc:  [245, 245, 260, 280, 385],
-  gel_cad:  [465, 465, 465, 465, 465], gel_dano: [470, 470, 470, 470, 470], gel_alc:  [470, 470, 470, 470, 470],
 };
+// Torres novas: custos por escala geométrica cs(base, fator) — [dano/alcance/cadência base, unidade base] por torre; recalibrados pela simulação
+const cs = (b, f = 1.2) => [0, 1, 2, 3, 4].map(i => Math.round(b * Math.pow(f, i)));
+// Preços por tier (ordem da árvore): quanto mais avançada a torre, mais caro liberar e melhorar. [prefixo, base dano/alcance/cadência, base unidade]; níveis ×1.14 (perks) e ×1.22 (unidade)
+const TIERS = [['can', 240, 310], ['bal', 300, 390], ['cha', 360, 470], ['tes', 430, 560], ['ven', 510, 660], ['gel', 600, 780], ['tot', 700, 910]];
+for (const [p, b, bs] of TIERS) { CUSTOS[p + '_dano'] = cs(b, 1.14); CUSTOS[p + '_alc'] = cs(b, 1.14); CUSTOS[p + '_cad'] = cs(b, 1.14); CUSTOS[p + '_slot'] = cs(bs, 1.22); }
+CUSTOS.can_raio = cs(380, 1.14); CUSTOS.gel_dur = cs(720, 1.14);
 // perks de dano / alcance / cadência: um conjunto por torre (prefixo arq_, can_, gel_)
-for (const [p, nm] of [['arq', 'do Arqueiro'], ['can', 'do Canhão'], ['gel', 'do Gelo']]) {
+for (const [p, nm] of [['arq', 'do Arqueiro'], ['can', 'do Canhão'], ['gel', 'do Gelo'], ['bal', 'da Balista'], ['tes', 'do Tesla'], ['cha', 'das Chamas'], ['ven', 'do Alquimista'], ['tot', 'do Totem']]) {
   PERKS[p + '_dano'] = { n: 'Afiação',  d: `+32% dano ${nm}`,     u: 0.32, c: CUSTOS[p + '_dano'] };
   PERKS[p + '_alc']  = { n: 'Mira',      d: `+13% alcance ${nm}`,  u: 0.13, c: CUSTOS[p + '_alc'] };
   PERKS[p + '_cad']  = { n: 'Cadência',  d: `-11% recarga ${nm}`,  u: 0.11, c: CUSTOS[p + '_cad'] };
 }
 // Arqueiro: Afiação virou Perfuração (u:0 = não altera dano; nível = nº de inimigos extras atravessados por flecha)
 PERKS.arq_dano = { n: 'Perfuração', d: '+1 inimigo atravessado por flecha', u: 0, c: CUSTOS.arq_dano };
+// Torres novas: liberar (raiz ARSENAL) + unidades extras. Totem não ataca: seus perks reforçam a aura.
+const NOVAS = [['balista', 'bal', 'Balista', 2200], ['tesla', 'tes', 'Tesla', 4000], ['chamas', 'cha', 'Chamas', 3000], ['veneno', 'ven', 'Alquimista', 5200], ['totem', 'tot', 'Totem', 8800]];
+for (const [k, p, nm, c] of NOVAS) { PERKS[k] = { n: nm, d: `Libera ${nm}`, u: 1, c: [c] }; PERKS[p + '_slot'] = { n: 'Unidade', d: `+1 ${nm} em campo`, u: 1, c: CUSTOS[p + '_slot'] }; }
+Object.assign(PERKS.tot_dano, { n: 'Fervor', d: '+30% bônus de dano da aura', u: 0.3 });
+Object.assign(PERKS.tot_alc, { n: 'Aura', d: '+13% raio da aura' });
+Object.assign(PERKS.tot_cad, { n: 'Ritmo', d: '+30% bônus de cadência da aura', u: 0.3 });
+// Canhão (1490) < Balista (2200) < Chamas (3000) < Tesla (4000) < Alquimista (5200) < Gelo (6800) < Totem (8800); unidades e especiais seguem o tier
+PERKS.can_slot.c = CUSTOS.can_slot; PERKS.gel_slot.c = CUSTOS.gel_slot; PERKS.can_raio.c = CUSTOS.can_raio; PERKS.gel_dur.c = CUSTOS.gel_dur; PERKS.gelo.c = [6800];
 for (const k in PERKS) PERKS[k].mx = PERKS[k].c.length;
 const custoPerk = (p, l) => p.c[l];
-// Skill tree única (uma árvore por torre, todas no mesmo mapa). x/y em 960x600; pai = perk que precisa ter nível ≥ 1, ou uma raiz de ROOTS
+// Skill tree única, x/y em 960xTREE_H; pai = perk que precisa ter nível ≥ 1, ou uma raiz de ROOTS
 const ROOTS = {
-  BASE: { x: 90,  y: 330, pai: null,   ic: 'BAS', nome: 'BASE' },
-  ARQ:  { x: 340, y: 320, pai: 'BASE', ic: 'ARQ', nome: 'ARQUEIRO' },
+  BASE: { x: 120, y: 70,  pai: null,   ic: 'BAS', nome: 'BASE' },
+  ARQ:  { x: 120, y: 210, pai: 'BASE', ic: 'ARQ', nome: 'ARQUEIRO' },
 };
-const PRE = { arqueiro: 'arq', canhao: 'can', gelo: 'gel' };
-const TREE = {
-  arq_slot:  { x: 400, y: 470, pai: 'ARQ',      ic: 'UNI', cor: '#c8903c' },
-  can_slot:  { x: 770, y: 300, pai: 'canhao',   ic: 'UNI', cor: '#c8903c' },
-  gel_slot:  { x: 775, y: 540, pai: 'gelo',     ic: 'UNI', cor: '#c8903c' },
-  vida:      { x: 110, y: 470, pai: 'BASE',     ic: 'HP',  cor: '#ff4c4c' },
-  arq_dano:  { x: 240, y: 190, pai: 'ARQ',      ic: 'PER', cor: '#ff6060' },
-  arq_alc:   { x: 400, y: 190, pai: 'ARQ',      ic: 'RNG', cor: '#6fd6ff' },
-  arq_multi: { x: 520, y: 190, pai: 'arq_alc',  ic: 'x2',  cor: '#ffffff' },
-  arq_cad:   { x: 260, y: 470, pai: 'ARQ',      ic: 'CAD', cor: '#ffd84c' },
-  canhao:    { x: 740, y: 190, pai: 'ARQ',      ic: 'CAN', cor: '#8a8a95' },
-  can_dano:  { x: 650, y: 110, pai: 'canhao',   ic: 'ATK', cor: '#ff6060' },
-  can_alc:   { x: 830, y: 110, pai: 'canhao',   ic: 'RNG', cor: '#6fd6ff' },
-  can_raio:  { x: 900, y: 230, pai: 'can_alc',  ic: 'AOE', cor: '#ffffff' },
-  can_cad:   { x: 640, y: 270, pai: 'canhao',   ic: 'CAD', cor: '#ffd84c' },
-  gelo:      { x: 740, y: 440, pai: 'ARQ',      ic: 'ICE', cor: '#6fd6ff' },
-  gel_dano:  { x: 640, y: 360, pai: 'gelo',     ic: 'ATK', cor: '#ff6060' },
-  gel_alc:   { x: 840, y: 360, pai: 'gelo',     ic: 'RNG', cor: '#6fd6ff' },
-  gel_dur:   { x: 905, y: 480, pai: 'gel_alc',  ic: 'DUR', cor: '#ffffff' },
-  gel_cad:   { x: 650, y: 525, pai: 'gelo',     ic: 'CAD', cor: '#ffd84c' },
-};
+const PRE = { arqueiro: 'arq', canhao: 'can', gelo: 'gel', balista: 'bal', tesla: 'tes', chamas: 'cha', veneno: 'ven', totem: 'tot' };
+const TREE = { vida: { x: 240, y: 70, pai: 'BASE', ic: 'HP', cor: '#ff4c4c' } };
+// Skill tree em serpentina: 8 torres em blocos de 240px; liberar uma exige a anterior (ordem crescente de custo). Cada bloco: liberar → dano/alcance/cadência/unidade (todos filhos diretos);
+// o perk especial (Tiro múltiplo, Explosão, Congelar) fica sob o alcance. Linha 1 vai da esquerda p/ direita, linha 2 volta.
+const TREE_H = 920;
+const CADEIA = [['arqueiro', 'arq', 120, 210, 'ARQ'], ['canhao', 'can', 360, 210, 'CAN'], ['balista', 'bal', 600, 210, 'BAL'], ['chamas', 'cha', 840, 210, 'CHA'],
+  ['tesla', 'tes', 840, 600, 'TES'], ['veneno', 'ven', 600, 600, 'ALQ'], ['gelo', 'gel', 360, 600, 'ICE'], ['totem', 'tot', 120, 600, 'TOT']];
+const ESPECIAL = { arq: ['arq_multi', 'x2'], can: ['can_raio', 'AOE'], gel: ['gel_dur', 'DUR'] };
+CADEIA.forEach(([k, p, x, y, ic], i) => {
+  const raiz = i === 0;
+  if (!raiz) TREE[k] = { x, y, pai: CADEIA[i - 1][0] === 'arqueiro' ? 'ARQ' : CADEIA[i - 1][0], ic, cor: TOWERS[k].cor };
+  const f = raiz ? 'ARQ' : k;
+  TREE[p + '_dano'] = { x: x - 90, y: y + 120, pai: f, ic: p === 'arq' ? 'PER' : 'ATK', cor: '#ff6060' };
+  TREE[p + '_alc'] = { x: x - 30, y: y + 120, pai: f, ic: 'RNG', cor: '#6fd6ff' };
+  TREE[p + '_cad'] = { x: x + 30, y: y + 120, pai: f, ic: 'CAD', cor: '#ffd84c' };
+  TREE[p + '_slot'] = { x: x + 90, y: y + 120, pai: f, ic: 'UNI', cor: '#c8903c' };
+  if (ESPECIAL[p]) TREE[ESPECIAL[p][0]] = { x: x - 30, y: y + 230, pai: p + '_alc', ic: ESPECIAL[p][1], cor: '#ffffff' };
+});
 // BALANCEAMENTO (simulador headless): moedas = abates / ABATES_POR_MOEDA.
 //   sem melhorias ~14 abates · +Mira/Tiro múltiplo ~120 · +2 unidades ~470 · arqueiros maxados ~2000 · +Canhão ~4600 (vitória).
 //   Comprando sempre o mais barato: 1ª unidade extra ~run 12, Canhão ~33, 1ª vitória ~42, Gelo ~49, árvore completa ~63.

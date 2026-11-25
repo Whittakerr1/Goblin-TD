@@ -5,16 +5,28 @@ const q = v => Math.floor(v / 2) * 2;
 const rad = d => d * Math.PI / 180;
 const angD = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
 const rnd = (a, b) => a + Math.random() * (b - a);
+const BASE = [CFG.baseX, CFG.baseY];
 // ponto mais próximo do caminho (para limitar a multidão e bloquear torres)
 function nearPath(x, y) {
-  let best = { d: 1e9, x: 0, y: 0 }; const P = MAPA.pontos;
-  for (let i = 0; i < P.length - 1; i++) {
+  let best = { d: 1e9, x: 0, y: 0 };
+  for (const P of MAPA.rotas) for (let i = 0; i < P.length - 1; i++) {
     const a = P[i], b = P[i + 1], vx = b[0] - a[0], vy = b[1] - a[1];
     const t = Math.max(0, Math.min(1, ((x - a[0]) * vx + (y - a[1]) * vy) / (vx * vx + vy * vy)));
     const nx = a[0] + vx * t, ny = a[1] + vy * t, d = Math.hypot(x - nx, y - ny);
     if (d < best.d) best = { d, x: nx, y: ny };
   }
   return best;
+}
+// versão rápida p/ goblins: só testa os segmentos perto do waypoint atual da própria rota
+function nearRoute(x, y, P, wp) {
+  let bd = 1e9, bx = 0, by = 0;
+  for (let i = Math.max(0, wp - 2), e = Math.min(P.length - 2, wp + 1); i <= e; i++) {
+    const a = P[i], b = P[i + 1], vx = b[0] - a[0], vy = b[1] - a[1];
+    const t = Math.max(0, Math.min(1, ((x - a[0]) * vx + (y - a[1]) * vy) / (vx * vx + vy * vy)));
+    const nx = a[0] + vx * t, ny = a[1] + vy * t, d = Math.sqrt((x - nx) * (x - nx) + (y - ny) * (y - ny));
+    if (d < bd) { bd = d; bx = nx; by = ny; }
+  }
+  return { d: bd, x: bx, y: by };
 }
 const CELL = 24, COLS = Math.ceil(CFG.W / CELL) + 1, ROWS = Math.ceil(CFG.H / CELL) + 1;
 let S;
@@ -23,6 +35,10 @@ let S;
 let META = { moedas: 0, lv: {} }, JOGADOR = 'Jogador';
 const lerLS = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } };
 const jogadores = () => lerLS('goblintd_jogadores', []);
+// mapa i abre ao vencer o i-1; torres salvas ficam por mapa (META.torres[mapa]); formato antigo (lista) vira o mapa 0
+const desbloq = i => i === 0 || JOGADOR.toLowerCase() === 'whittaker' || !!(META.vit && META.vit[i - 1]);
+const tmapa = () => { if (Array.isArray(META.torres)) META.torres = { 0: META.torres }; return META.torres || (META.torres = {}); };
+const mapaInicial = () => { const i = META.mapa || 0; return i < MAPAS.length && desbloq(i) ? i : 0; };
 function carregarMeta(nome) {
   JOGADOR = nome; META = { moedas: 0, lv: {} };
   const m = lerLS('goblintd_meta_' + nome, null); if (m && m.lv) META = m;
@@ -47,32 +63,59 @@ const livre = k => k === 'arqueiro' || pk(k) > 0;
 // limite de unidades individual por torre: 1 base + perk de Unidade da própria árvore
 const vagas = k => 1 + pk(PRE[k] + '_slot'), usadas = k => S.tow.filter(t => t.k === k).length, cheio = k => usadas(k) >= vagas(k);
 
-// fundo estático (grama xadrez), desenhado uma vez
+// fundo estático do mapa atual (tema, poças de perigo, caminho(s) e obstáculos); redesenhado a cada troca de mapa
 const bg = document.createElement('canvas'); bg.width = CFG.W; bg.height = CFG.H;
-(function () {
-  const b = bg.getContext('2d');
+function drawBg() {
+  const b = bg.getContext('2d'), T = MAPA.tema || TEMA0;
   for (let y = 0; y < CFG.H; y += 16) for (let x = 0; x < CFG.W; x += 16) {
-    b.fillStyle = ((x + y) / 16) % 2 ? '#2f6a2a' : '#2a6026'; b.fillRect(x, y, 16, 16);
-    if ((x * 7 + y * 13) % 11 === 0) { b.fillStyle = '#3c8034'; b.fillRect(x + 4, y + 6, 2, 2); }
+    b.fillStyle = ((x + y) / 16) % 2 ? T.g[0] : T.g[1]; b.fillRect(x, y, 16, 16);
+    if ((x * 7 + y * 13) % 11 === 0) { b.fillStyle = T.g[2]; b.fillRect(x + 4, y + 6, 2, 2); }
   }
-  // caminho de terra: borda escura, miolo claro, pedrinhas
-  const P = MAPA.pontos, h = MAPA.larg / 2, segs = [];
-  for (let i = 0; i < P.length - 1; i++) {
+  // poças dos gêiseres/lava (fixas; o aviso piscando é desenhado em draw)
+  for (const z of MAPA.perigos) for (let y = -z.r; y <= z.r; y += 2) for (let x = -z.r; x <= z.r; x += 2) if (x * x + y * y <= z.r * z.r) { b.fillStyle = (x * 3 + y * 5) % 11 === 0 ? z.cor2 : z.cor; b.fillRect(q(z.x + x), q(z.y + y), 2, 2); }
+  // caminho(s) de terra: borda escura, miolo claro, pedrinhas
+  const h = MAPA.larg / 2, segs = [];
+  for (const P of MAPA.rotas) for (let i = 0; i < P.length - 1; i++) {
     const a = P[i], c = P[i + 1];
     segs.push([q(Math.min(a[0], c[0]) - h), q(Math.min(a[1], c[1]) - h), q(Math.abs(c[0] - a[0]) + 2 * h), q(Math.abs(c[1] - a[1]) + 2 * h)]);
   }
-  b.fillStyle = '#5a4630'; segs.forEach(s => b.fillRect(s[0] - 4, s[1] - 4, s[2] + 8, s[3] + 8));
-  b.fillStyle = '#9a7a48'; segs.forEach(s => b.fillRect(s[0], s[1], s[2], s[3]));
-  b.fillStyle = '#8a6a3c';
+  b.fillStyle = T.p[0]; segs.forEach(s => b.fillRect(s[0] - 4, s[1] - 4, s[2] + 8, s[3] + 8));
+  b.fillStyle = T.p[1]; segs.forEach(s => b.fillRect(s[0], s[1], s[2], s[3]));
+  b.fillStyle = T.p[2];
   segs.forEach(s => { for (let y = s[1]; y < s[1] + s[3]; y += 8) for (let x = s[0]; x < s[0] + s[2]; x += 8) if ((x * 5 + y * 3) % 7 === 0) b.fillRect(x + 2, y + 2, 2, 2); });
-})();
+  // obstáculos (sem torres): moitas/rochas em blocos 2px
+  const ob = T.ob || TEMA0.ob;
+  for (const [bx, by, bw, bh] of MAPA.bloq) for (let y = by; y < by + bh; y += 12) for (let x = bx; x < bx + bw; x += 12) {
+    const jx = (x * 7 + y * 3) % 5 * 2, jy = (x * 3 + y * 5) % 5 * 2;
+    b.fillStyle = ob[0]; b.fillRect(q(x + jx), q(y + jy), 14, 14); b.fillStyle = ob[1]; b.fillRect(q(x + jx + 2), q(y + jy + 2), 10, 8); b.fillStyle = '#5a3a1a'; b.fillRect(q(x + jx + 6), q(y + jy + 10), 4, 4);
+  }
+}
+// neblina local (pontilhado cinza + borda) e muralhas de pedra, desenhadas sobre o fundo
+function drawBgExtra() {
+  const b = bg.getContext('2d');
+  for (const z of MAPA.nevoas) {
+    b.fillStyle = '#aab4b8';
+    for (let j = -z.r; j <= z.r; j += 4) for (let i = -z.r; i <= z.r; i += 4) if (i * i + j * j <= z.r * z.r && ((i + j) / 4) % 3 === 0) b.fillRect(q(z.x + i), q(z.y + j), 2, 2);
+    b.fillStyle = '#ffffff';
+    for (let a = 0; a < 6.28; a += 7 / z.r) b.fillRect(q(z.x + Math.cos(a) * z.r), q(z.y + Math.sin(a) * z.r), 2, 2);
+  }
+  for (const [mx, my, mw, mh] of MAPA.muros) {
+    b.fillStyle = '#34343c'; b.fillRect(q(mx) - 2, q(my) - 2, q(mw) + 4, q(mh) + 4);
+    b.fillStyle = '#6e6e78'; b.fillRect(q(mx), q(my), q(mw), q(mh));
+    b.fillStyle = '#9a9aa6'; b.fillRect(q(mx), q(my), q(mw), 2);
+    b.fillStyle = '#4a4a54';
+    for (let y = q(my) + 8, r = 0; y < my + mh; y += 8, r++) { b.fillRect(q(mx), y, q(mw), 2); for (let x = q(mx) + (r % 2) * 8 + 6; x < mx + mw; x += 16) b.fillRect(x, y - 8, 2, 8); }
+  }
+}
+let MI = 0;
+function setMapa(i) { MI = i; MAPA = MAPAS[i]; RUN_FRAMES = runFrames(MAPA); META.mapa = i; drawBg(); drawBgExtra(); buildMapas(); }
 
 function reset() {
-  S = { run: 0, hp: CFG.baseHp + ef('vida'), kills: 0, ganho: 0, wave: 0, gob: [], tow: [], proj: [], part: [], groups: [],
+  S = { run: 0, hp: CFG.baseHp + ef('vida'), kills: 0, ganho: 0, wave: 0, gob: [], tow: [], proj: [], part: [], zon: [], groups: [],
         sel: 'arqueiro', over: false, won: false, pause: false, speed: (S && S.speed) || 1, t: 0, mx: 0, my: 0, ativa: false, prox: 300, aim: null };
   S.plano = planoHorda();
   // restaura as torres salvas ao fim da última run (respeitando unidades liberadas e vagas)
-  for (const t of META.torres || []) if (TOWERS[t.k] && livre(t.k) && !cheio(t.k)) S.tow.push({ x: t.x, y: t.y, def: TOWERS[t.k], k: t.k, lvl: t.lvl || 1, cd: 0, dir: t.dir, cone: t.cone, sw: 0, sd: 1 });
+  for (const t of tmapa()[MI] || []) if (TOWERS[t.k] && livre(t.k) && !cheio(t.k) && canPlace(t.x, t.y)) S.tow.push({ x: t.x, y: t.y, def: TOWERS[t.k], k: t.k, lvl: t.lvl || 1, cd: 0, dir: t.dir, cone: t.cone, sw: 0, sd: 1 });
   buildShop();
 }
 
@@ -95,11 +138,12 @@ function planoHorda() {
     const fim = o.dur * 60;
     for (let t = 0; t < fim;) {
       const u = t / fim, n = Math.round((o.tamIni + (o.tamFim - o.tamIni) * u) * D.qtd), w = {}, list = []; let tot = 0;
-      for (const k in GOBLINS) { w[k] = o.peso0[k] + (o.peso1[k] - o.peso0[k]) * u; tot += w[k]; }
+      for (const k in GOBLINS) { const a0 = o.peso0[k] || 0; w[k] = a0 + ((o.peso1[k] || 0) - a0) * u; tot += w[k]; }
       for (let i = 0; i < n; i++) { let r = Math.random() * tot, tipo = 'comum'; for (const k in w) if ((r -= w[k]) < 0) { tipo = k; break; } for (let c = GOBLINS[tipo].enxame || 1; c--;) list.push(tipo); }
       gr.push({ delay: off + t, u, o, list });
       t += o.gapIni + (o.gapFim - o.gapIni) * u;
     }
+    if (o.chefe) gr.push({ delay: off + o.chefe * 60, u: 1, o, list: ['chefe'] });
     off += fim;
   });
   return gr;
@@ -110,16 +154,19 @@ function startWave() {
   S.groups = S.plano;
 }
 
+const mkG = (tipo, x, y, wp, rt, vm, hp) => ({ tipo, d: GOBLINS[tipo], x, y, vx: 0, vy: 0, vm, wp, rt, prog: 0, hp, max: hp, r: GOBLINS[tipo].r, slow: 0, burn: 0, bd: 0, ph: rnd(0, 6.28), flash: 0, dead: false, lane: rnd(0.2, 1) });
 function spawnGroup(gr) {
+  const o = gr.o, D = dif(MAPA.nivel), rt = Math.floor(Math.random() * MAPA.rotas.length), P0 = MAPA.rotas[rt], a = P0[0], b = P0[1], L = Math.hypot(b[0] - a[0], b[1] - a[1]), ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L, vm = D.vel * (o.vel[0] + (o.vel[1] - o.vel[0]) * gr.u);
   gr.list.forEach(tipo => {
-    const d = GOBLINS[tipo], o = gr.o, D = dif(MAPA.nivel), hp = d.fixo ? d.hp : Math.round(d.hp * D.hp * (o.hp[0] + (o.hp[1] - o.hp[0]) * gr.u));
-    S.gob.push({ tipo, d, x: rnd(-90, -6), y: MAPA.pontos[0][1] + rnd(-MAPA.larg / 2 + 8, MAPA.larg / 2 - 8),
-      vx: 0, vy: 0, vm: D.vel * (o.vel[0] + (o.vel[1] - o.vel[0]) * gr.u), wp: 1, prog: 0, hp, max: hp, r: d.r, slow: 0, ph: rnd(0, 6.28), flash: 0, dead: false });
+    const d = GOBLINS[tipo], hp = d.fixo ? d.hp : Math.round(d.hp * D.hp * (o.hp[0] + (o.hp[1] - o.hp[0]) * gr.u));
+    { const back = rnd(-54, 30), lat = rnd(-MAPA.larg / 2 + 8, MAPA.larg / 2 - 8); // nasce na entrada da rota, na direção do primeiro trecho (esquerda, topo ou base)
+      S.gob.push(mkG(tipo, a[0] - ux * back - uy * lat, a[1] - uy * back + ux * lat, 1, rt, vm, hp)); }
   });
 }
 
 // ---------- efeitos (blocos sólidos, sem alpha) ----------
 function burst(x, y, n, c1, c2, sp) {
+  if (S.part.length > 700) return;
   for (let i = 0; i < n; i++) {
     const a = rnd(0, 6.28), v = rnd(0.3, sp || 1.6);
     S.part.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 24, max: 24, c1, c2 });
@@ -129,50 +176,81 @@ function ringFx(x, y, r, c1, c2) {
   for (let a = 0; a < 6.28; a += 6 / r) S.part.push({ x: x + Math.cos(a) * r, y: y + Math.sin(a) * r, vx: 0, vy: 0, life: 14, max: 14, c1, c2 });
 }
 
-function hit(g, dmg) { g.hp -= dmg; g.flash = 3; if (g.hp <= 0 && !g.dead) { g.dead = true; S.kills++; burst(g.x, g.y, g.d.enxame ? 2 : 6, g.d.cor, g.d.cor2); } }
+function hit(g, dmg, pura) { if (g.d.armor && !pura) dmg = Math.max(1, dmg - g.d.armor); g.hp -= dmg; g.flash = 3; if (g.hp <= 0 && !g.dead) { g.dead = true; S.kills++; burst(g.x, g.y, g.d.enxame ? 2 : 6, g.d.cor, g.d.cor2); } }
 
 // ---------- torres ----------
-const tStat = t => ({ dano: t.def.dano * (1 + 0.5 * (t.lvl - 1)) * (1 + ef(PRE[t.k] + '_dano')), alc: t.def.alcance * (1 + 0.1 * (t.lvl - 1)) * (1 + ef(PRE[t.k] + '_alc')) });
+// Totem: aura que soma dano/cadência às torres dentro do raio (acumula entre Totens; Totem atordoado não funciona)
+// neblina local: torres dentro de uma zona têm o alcance multiplicado por f
+const nevoaF = (x, y) => { let f = 1; for (const z of MAPA.nevoas) if (Math.hypot(x - z.x, y - z.y) < z.r) f = Math.min(f, z.f); return f; };
+const auraR = o => o.def.alcance * (1 + ef('tot_alc')) * (MAPA.mod.alc || 1) * nevoaF(o.x, o.y);
+function bonus(t) {
+  let d = 0, c = 0;
+  for (const o of S.tow) if (o.def.tipo === 'aura' && o !== t && !(o.stun > 0) && Math.hypot(o.x - t.x, o.y - t.y) <= auraR(o)) { d += o.def.buffD * (1 + ef('tot_dano')); c += o.def.buffC * (1 + ef('tot_cad')); }
+  return { d: Math.min(d, 1.5), c: Math.min(c, 1) };
+}
+const tStat = t => ({ dano: t.def.dano * (1 + 0.5 * (t.lvl - 1)) * (1 + ef(PRE[t.k] + '_dano')) * (1 + bonus(t).d), alc: t.def.alcance * (1 + 0.1 * (t.lvl - 1)) * (1 + ef(PRE[t.k] + '_alc')) * (MAPA.mod.alc || 1) * nevoaF(t.x, t.y) });
 const baseDist = (x, y) => Math.hypot(CFG.baseX - x, CFG.baseY - y);
 
 function arcFx(x, y, r, a0, a1, c1, c2) {
   for (let a = a0; a <= a1; a += 6 / r) S.part.push({ x: x + Math.cos(a) * r, y: y + Math.sin(a) * r, vx: 0, vy: 0, life: 14, max: 14, c1, c2 });
 }
-const mkProj = (t, ang, st, def) => ({ x: t.x, y: t.y, vx: Math.cos(ang) * def.vel, vy: Math.sin(ang) * def.vel, def, dano: st.dano, raio: def.raio ? def.raio * (1 + ef('can_raio')) : 0, rest: st.alc, furo: def.tipo === 'flecha' ? pk('arq_dano') : 0 });
+const mkProj = (t, ang, st, def) => ({ x: t.x, y: t.y, vx: Math.cos(ang) * def.vel, vy: Math.sin(ang) * def.vel, def, dano: st.dano, raio: def.raio ? def.raio * (def.tipo === 'bomba' ? 1 + ef('can_raio') : 1) : 0, rest: st.alc, furo: def.tipo === 'flecha' ? pk('arq_dano') : 0 });
 
+// Tesla: mira sozinha (goblin mais adiantado dentro do cone) e a descarga salta entre vizinhos próximos; raio em blocos 4px (branco → tom escuro ao dissipar)
+function lineFx(x0, y0, x1, y1) {
+  const n = Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0) / 4));
+  for (let i = 0; i <= n; i++) { const k = i / n, j = i > 0 && i < n ? rnd(-3, 3) : 0; S.part.push({ x: x0 + (x1 - x0) * k + j, y: y0 + (y1 - y0) * k + j, vx: 0, vy: 0, life: 8, max: 8, c1: '#ffffff', c2: '#a08010' }); }
+}
+function raio(t, st) {
+  const def = t.def; let g = null;
+  for (const o of S.gob) { if (o.dead) continue; const dx = o.x - t.x, dy = o.y - t.y; if (dx * dx + dy * dy <= st.alc * st.alc && angD(Math.atan2(dy, dx), t.dir) <= t.cone / 2 + 0.1 && (!g || o.prog > g.prog)) g = o; }
+  if (!g) return;
+  const vis = new Set(); let px = t.x, py = t.y;
+  for (let i = 0; g && i <= def.cadeia; i++) {
+    lineFx(px, py, g.x, g.y); hit(g, st.dano); vis.add(g); px = g.x; py = g.y;
+    const ci = ((g.x / CELL) | 0) + 1 + ((g.y / CELL) | 0) * COLS; let nx = null, nd = def.elo;
+    for (let oy = -2; oy <= 2; oy++) for (let ox = -2; ox <= 2; ox++) { const c = GRID[ci + ox + oy * COLS]; if (c) for (const o of c) if (!o.dead && !vis.has(o)) { const d = Math.hypot(o.x - px, o.y - py); if (d < nd) { nd = d; nx = o; } } }
+    g = nx;
+  }
+}
 // Torres não miram: varrem o cone (ponta a ponta, ida e volta) e atiram em linha reta; só disparam se houver goblin dentro do cone
 function fire(t) {
   const st = tStat(t), def = t.def, N = CONE_CFG.passos;
-  if (!S.gob.some(g => { if (g.dead) return false; const dx = g.x - t.x, dy = g.y - t.y; return Math.hypot(dx, dy) <= st.alc && angD(Math.atan2(dy, dx), t.dir) <= t.cone / 2 + 0.1; })) return;
-  t.cd = def.cd * (1 - ef(PRE[t.k] + '_cad'));
+  if (!S.gob.some(g => { if (g.dead) return false; const dx = g.x - t.x, dy = g.y - t.y; return dx * dx + dy * dy <= st.alc * st.alc && angD(Math.atan2(dy, dx), t.dir) <= t.cone / 2 + 0.1; })) return;
+  t.cd = def.cd * (1 - ef(PRE[t.k] + '_cad')) / (1 + bonus(t).c);
   const a = t.dir - t.cone / 2 + t.sw * t.cone, step = 1 / (N - 1);
   let nx = t.sw + t.sd * step; if (nx > 1.0001 || nx < -0.0001) { t.sd = -t.sd; nx = t.sw + t.sd * step; } t.sw = nx;
-  if (def.tipo === 'pulso') {
+  if (def.tipo === 'pulso' || def.tipo === 'fogo') {
     const hw = t.cone / N;
     for (const g of S.gob) {
       const dx = g.x - t.x, dy = g.y - t.y;
-      if (!g.dead && Math.hypot(dx, dy) <= st.alc && angD(Math.atan2(dy, dx), a) <= hw) { g.slow = def.slowT * (1 + ef('gel_dur')); hit(g, st.dano); }
+      if (!g.dead && dx * dx + dy * dy <= st.alc * st.alc && angD(Math.atan2(dy, dx), a) <= hw) { if (def.tipo === 'fogo') { g.burn = def.queima; g.bd = st.dano * def.queimaD; } else g.slow = def.slowT * (1 + ef('gel_dur')); hit(g, st.dano); }
     }
     arcFx(t.x, t.y, st.alc * 0.5, a - hw, a + hw, '#ffffff', def.cor2); arcFx(t.x, t.y, st.alc, a - hw, a + hw, def.cor, def.cor2);
   } else if (def.tipo === 'flecha') {
     const n = 1 + pk('arq_multi');
     for (let i = 0; i < n; i++) S.proj.push(mkProj(t, a + (i - (n - 1) / 2) * 0.14, st, def));
-  } else S.proj.push(mkProj(t, a, st, def));
+  } else if (def.tipo === 'raio') raio(t, st);
+  else S.proj.push(mkProj(t, a, st, def));
 }
 
 function updateTowers() {
-  for (const t of S.tow) { if (t.cd > 0) t.cd--; else fire(t); }
+  for (const t of S.tow) { if (t.stun > 0) { t.stun--; continue; } if (t.def.tipo === 'aura') continue; if (t.cd > 0) t.cd--; else fire(t); }
   for (const p of S.proj) {
     p.x += p.vx; p.y += p.vy; p.rest -= p.def.vel;
-    let tg = null; const ci = ((p.x / CELL) | 0) + 1 + ((p.y / CELL) | 0) * COLS;
+    // muralhas barram flechas e virotes (bombas e poças passam por cima)
+    if (MAPA.muros.length && (p.def.tipo === 'flecha' || p.def.tipo === 'lanca') && MAPA.muros.some(m => p.x > m[0] && p.x < m[0] + m[2] && p.y > m[1] && p.y < m[1] + m[3])) { p.done = true; burst(p.x, p.y, 4, '#ffffff', '#6e6e78', 1.2); continue; }
+    let tg = null, mt = null; const ci = ((p.x / CELL) | 0) + 1 + ((p.y / CELL) | 0) * COLS;
     hitSearch: for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
       const c = GRID && GRID[ci + ox + oy * COLS]; if (!c) continue;
-      for (const g of c) if (!g.dead && !(p.vis && p.vis.has(g)) && Math.hypot(g.x - p.x, g.y - p.y) < g.r + 3) { tg = g; break hitSearch; }
+      for (const g of c) { const dx = g.x - p.x, dy = g.y - p.y, rr = g.r + 6; if (!g.dead && !(p.vis && p.vis.has(g)) && dx * dx + dy * dy < rr * rr) { tg = g; if (!p.def.multi) break hitSearch; (mt = mt || []).push(g); } }
     }
-    if (tg && p.furo > 0) { hit(tg, p.dano); p.furo--; (p.vis = p.vis || new Set()).add(tg); } // perfuração: atravessa e segue
+    if (mt) { p.vis = p.vis || new Set(); for (const g of mt) { hit(g, p.dano); p.vis.add(g); } } // balista: atravessa todos na linha
+    else if (tg && p.furo > 0) { hit(tg, p.dano); p.furo--; (p.vis = p.vis || new Set()).add(tg); } // perfuração: atravessa e segue
     else if (tg || p.rest <= 0) {
       p.done = true;
-      if (p.def.tipo === 'flecha') { if (tg) hit(tg, p.dano); }
+      if (p.def.tipo === 'flecha' || p.def.tipo === 'lanca') { if (tg) hit(tg, p.dano); }
+      else if (p.def.tipo === 'poca') { S.zon.push({ x: p.x, y: p.y, r: p.raio, life: p.def.dur, tick: p.def.tick, dano: p.dano, pct: p.def.pct * p.dano / p.def.dano }); burst(p.x, p.y, 10, '#b8ff8a', p.def.cor2, 1.4); }
       else {
         for (const g of S.gob) if (!g.dead && Math.hypot(g.x - p.x, g.y - p.y) < p.raio) hit(g, p.dano);
         burst(p.x, p.y, 14, '#ffffff', '#ffb030', 2.4); ringFx(p.x, p.y, p.raio * 0.6, '#ffb030', '#7a3a10');
@@ -185,44 +263,79 @@ function updateTowers() {
 // ---------- goblins: multidão com separação por grade ----------
 let GRID = null; const COLIS_MAX = 6;
 function updateGoblins() {
-  const grid = GRID = new Array(COLS * ROWS);
+  const grid = GRID = new Array(COLS * ROWS), nasc = [], xamas = [];
   for (const g of S.gob) { const i = ((g.x / CELL) | 0) + 1 + (((g.y / CELL) | 0)) * COLS; (grid[i] = grid[i] || []).push(g); g.ci = i; }
   for (const g of S.gob) {
     if (g.dead) continue;
-    const T = MAPA.pontos[g.wp], dx = T[0] - g.x, dy = T[1] - g.y, d = Math.hypot(dx, dy) || 1;
-    if (d < 30 && g.wp < MAPA.pontos.length - 1) g.wp++;
-    g.prog = g.wp * 1e4 - d;
+    const P = MAPA.rotas[g.rt], voa = g.d.voa, T = voa ? BASE : P[g.wp], dx = T[0] - g.x, dy = T[1] - g.y, d = Math.hypot(dx, dy) || 1;
+    if (!voa && d < 30 && g.wp < P.length - 1) g.wp++;
+    g.prog = (voa ? P.length : g.wp) * 1e4 - d;
     if (baseDist(g.x, g.y) < CFG.baseR) { S.hp -= g.d.dano; g.dead = true; burst(g.x, g.y, 8, '#ff4040', '#802020'); if (S.hp <= 0) { S.hp = 0; S.over = true; } continue; }
-    const sp = g.d.vel * g.vm * (g.slow > 0 ? TOWERS.gelo.slow : 1); if (g.slow > 0) g.slow--;
+    if (g.burn > 0) { g.burn--; if (g.burn % 15 === 0) { hit(g, g.bd, true); if (g.dead) continue; } } // queimadura ignora armadura
+    if (g.d.sabota) { // sapador: explode perto de torre e a atordoa por 6s
+      for (const t of S.tow) if (Math.hypot(t.x - g.x, t.y - g.y) < g.d.sab) { t.stun = Math.max(t.stun || 0, 360); g.dead = true; ringFx(g.x, g.y, 14, '#ffffff', g.d.cor2); burst(g.x, g.y, 10, g.d.cor, g.d.cor2, 2); break; }
+      if (g.dead) continue;
+    }
+    if (g.d.cura) xamas.push(g);
+    if (g.d.invoca && S.t % g.d.invoca === 0) for (let i = 0; i < 12; i++) nasc.push(mkG('comum', g.x + rnd(-14, 14), g.y + rnd(-14, 14), g.wp, g.rt, g.vm, GOBLINS.comum.hp));
+    const sp = g.d.vel * g.vm * (g.slow > 0 ? (g.d.boss ? 0.75 : TOWERS.gelo.slow) : 1); if (g.slow > 0) g.slow--;
     let ax = dx / d * sp, ay = dy / d * sp;
     ax += Math.cos(S.t * 0.04 + (g.d.enxame ? (g.x + g.y) * 0.04 : g.ph)) * 0.12; ay += Math.sin(S.t * 0.05 + (g.d.enxame ? (g.x - g.y) * 0.04 : g.ph)) * 0.2;
     let px = 0, py = 0;
+    if (!voa && g.nd > 0.5) { const k = (g.lane * (MAPA.larg / 2 - g.r - 1) - g.nd) * 0.03; px += (g.x - g.nx) / g.nd * k; py += (g.y - g.ny) / g.nd * k; } // faixa própria (usa a posição em relação ao caminho calculada no quadro anterior)
     for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
       const c = grid[g.ci + ox + oy * COLS]; if (!c) continue;
       // colisão com limite de vizinhos por célula (amostra rotativa a cada quadro) para aguentar o enxame
       const L = c.length, nn = Math.min(L, COLIS_MAX);
       for (let k = 0; k < nn; k++) {
         const o = c[L > COLIS_MAX ? (k + S.t) % L : k]; if (o === g || o.dead) continue;
-        const ex = g.x - o.x, ey = g.y - o.y, m = g.r + o.r + 1, dd = Math.hypot(ex, ey);
-        if (dd < m && dd > 0.01) { const f = (m - dd) / m * 1.3 * (o.r / g.r); px += ex / dd * f; py += ey / dd * f; }
+        const ex = g.x - o.x, ey = g.y - o.y, m = g.r + o.r + 5, dd = Math.sqrt(ex * ex + ey * ey);
+        if (dd < m && dd > 0.01) { const f = (m - dd) / m * 2.4 * (o.r / g.r); px += ex / dd * f; py += ey / dd * f; }
       }
     }
-    for (const t of S.tow) { const ex = g.x - t.x, ey = g.y - t.y, dd = Math.hypot(ex, ey); if (dd < 18 && dd > 0.01) { px += ex / dd * 1.2; py += ey / dd * 1.2; } }
+    for (const t of S.tow) { const ex = g.x - t.x, ey = g.y - t.y, dd = Math.sqrt(ex * ex + ey * ey); if (dd < 18 && dd > 0.01) { px += ex / dd * 1.2; py += ey / dd * 1.2; } }
     const sm = g.d.enxame ? 0.8 : 0.6; g.vx = g.vx * sm + (ax + px) * (1 - sm); g.vy = g.vy * sm + (ay + py) * (1 - sm);
     g.x += g.vx; g.y += g.vy;
-    const n = nearPath(g.x, g.y), lim = MAPA.larg / 2 - g.r - 1;
-    if (n.d > lim) { const k = 1 - lim / n.d; g.x += (n.x - g.x) * k; g.y += (n.y - g.y) * k; }
+    if (!voa) { const n = nearRoute(g.x, g.y, P, g.wp), lim = MAPA.larg / 2 - g.r - 1;
+      if (n.d > lim) { const k = 1 - lim / n.d; g.x += (n.x - g.x) * k; g.y += (n.y - g.y) * k; }
+      g.nd = Math.min(n.d, lim); g.nx = n.x; g.ny = n.y; }
     if (g.flash > 0) g.flash--;
   }
+  // xamã: cura % da vida a cada 0,5s (sem acumular; queimados não curam)
+  if (xamas.length && S.t % 30 === 0) for (const x of xamas) for (const o of S.gob) if (!o.dead && o.curaT !== S.t && !(o.burn > 0) && o.hp < o.max && Math.hypot(o.x - x.x, o.y - x.y) < x.d.raioCura) { o.curaT = S.t; o.hp = Math.min(o.max, o.hp + o.max * x.d.cura); }
   S.gob = S.gob.filter(g => !g.dead);
+  if (nasc.length) S.gob.push(...nasc);
 }
 
-function pagar() { S.pago = true; S.ganho = moedasGanhas(S.kills); META.moedas += S.ganho; META.torres = S.tow.map(t => ({ k: t.k, x: t.x, y: t.y, lvl: t.lvl, dir: t.dir, cone: t.cone })); salvarMeta(); }
+// poças do Alquimista (dano fixo + % da vida, ignora armadura, 1x por tick por goblin) e gêiseres do mapa (atordoam torres no raio)
+function updateExtras() {
+  for (const z of S.zon) {
+    z.life--;
+    if (S.t % z.tick === 0) for (const g of S.gob) if (!g.dead && g.pz !== S.t && Math.hypot(g.x - z.x, g.y - z.y) < z.r) { g.pz = S.t; hit(g, z.dano + g.max * z.pct * (g.d.boss ? 0.25 : 1), true); }
+    if (S.t % 6 === 0) S.part.push({ x: z.x + rnd(-z.r, z.r) * 0.8, y: z.y + rnd(-z.r, z.r) * 0.8, vx: 0, vy: -0.3, life: 14, max: 14, c1: '#b8ff8a', c2: '#2a8a28' });
+  }
+  S.zon = S.zon.filter(z => z.life > 0);
+  const TP = MAPA.tempestade; // tempestade: a cada `per` quadros um raio atordoa uma torre aleatória
+  if (TP && S.ativa && S.run > 0 && S.run % TP.per === 0) {
+    const al = S.tow.filter(t => !(t.stun > 0));
+    if (al.length) { const t = al[(Math.random() * al.length) | 0]; t.stun = Math.max(t.stun || 0, TP.stun); lineFx(t.x, t.y - 80, t.x, t.y); ringFx(t.x, t.y, 16, '#ffffff', '#a08010'); burst(t.x, t.y, 12, '#ffffff', '#ffe84c', 2.5); }
+  }
+  if (S.ativa) for (const h of MAPA.perigos) if (S.run > 0 && (S.run + h.off) % h.per === 0) {
+    for (const t of S.tow) if (Math.hypot(t.x - h.x, t.y - h.y) < h.r) t.stun = Math.max(t.stun || 0, h.stun);
+    ringFx(h.x, h.y, h.r * 0.5, '#ffffff', h.cor2); ringFx(h.x, h.y, h.r, '#ffffff', h.cor2); burst(h.x, h.y, 16, '#ffffff', h.cor2, 3);
+  }
+}
+function pagar() {
+  S.pago = true; S.ganho = moedasGanhas(S.kills); META.moedas += S.ganho;
+  tmapa()[MI] = S.tow.map(t => ({ k: t.k, x: t.x, y: t.y, lvl: t.lvl, dir: t.dir, cone: t.cone }));
+  if (S.won) { META.vit = META.vit || {}; if (!META.vit[MI]) { META.vit[MI] = true; S.novoMapa = MI + 1 < MAPAS.length ? MAPAS[MI + 1].nome : ''; } }
+  salvarMeta(); buildMapas();
+}
 function update() {
   S.t++;
   for (const gr of S.groups) { gr.delay--; if (gr.delay <= 0) { spawnGroup(gr); gr.done = true; } }
   S.groups = S.groups.filter(g => !g.done);
-  updateGoblins(); updateTowers();
+  updateGoblins(); updateTowers(); updateExtras();
   for (const p of S.part) { p.x += p.vx; p.y += p.vy; p.life--; }
   S.part = S.part.filter(p => p.life > 0);
   if (S.ativa) { S.run++; if (S.run >= RUN_FRAMES) { S.ativa = false; S.won = true; S.over = true; } }
@@ -242,7 +355,7 @@ function coneFx(x, y, r, dir, cone, c) {
 function drawAim() {
   const A = S.aim, dx = S.mx - A.x, dy = S.my - A.y;
   if (Math.hypot(dx, dy) > 6) A.dir = Math.atan2(dy, dx);
-  const alc = A.edit ? tStat(A.edit).alc : A.def.alcance * (1 + ef(PRE[A.k] + '_alc'));
+  const alc = A.edit ? tStat(A.edit).alc : A.def.alcance * (1 + ef(PRE[A.k] + '_alc')) * (MAPA.mod.alc || 1) * nevoaF(A.x, A.y);
   if (!A.edit) box(A.x, A.y, 10, A.def.cor);
   coneFx(A.x, A.y, alc, A.dir, A.cone, '#ffffff');
 }
@@ -252,6 +365,7 @@ function drawHud() {
   const on = Math.min(n, Math.floor(S.run / (RUN_FRAMES / n)) + 1), seg = RUN_FRAMES / n, restoSeg = Math.ceil((seg * on - S.run) / 60);
   ctx.font = 'bold 14px monospace';
   txt(JOGADOR, 8, 20, '#ffd84c');
+  ctx.font = 'bold 12px monospace'; txt(`${MI + 1}. ${MAPA.nome}`, 8, 36, '#6fd6ff'); ctx.font = '11px monospace'; txt(MAPA.desafio || '', 8, 51, '#cccccc'); ctx.font = 'bold 14px monospace';
   // vida
   ctx.fillStyle = '#1c2a44'; ctx.fillRect(X - 4, 4, W + 8, 24);
   ctx.fillStyle = '#7a1c14'; ctx.fillRect(X, 8, W, 16);
@@ -279,13 +393,18 @@ function draw() {
   ctx.drawImage(bg, 0, 0);
   const bx = CFG.baseX, by = CFG.baseY;
   box(bx, by, 64, '#4a4a55'); box(bx, by, 52, '#8a8a95'); box(bx, by, 28, '#5a4630'); box(bx, by - 40, 6, '#ff4040');
+  for (const h of MAPA.perigos) { const warn = S.ativa && h.per - (S.run + h.off) % h.per <= 90 && S.t % 10 < 5; ring(h.x, h.y, h.r, warn ? '#ff4040' : h.cor2); }
+  for (const z of S.zon) { if (z.life > 60 || z.life % 8 < 5) ring(z.x, z.y, z.r, '#6ae04c'); ring(z.x, z.y, z.r * 0.55, '#2a8a28'); }
   for (const t of S.tow) {
-    box(t.x, t.y, 16, t.def.cor2); box(t.x, t.y, 10, t.def.cor);
+    const st = t.stun > 0;
+    if (t.def.tipo === 'aura') ring(t.x, t.y, auraR(t), st ? '#555555' : t.def.cor);
+    box(t.x, t.y, 16, st ? '#303030' : t.def.cor2); box(t.x, t.y, 10, st ? '#707070' : t.def.cor);
     for (let i = 0; i < t.lvl; i++) box(t.x - 6 + i * 6 + 2, t.y + 11, 2, '#ffd84c');
-    const ma = t.dir - t.cone / 2 + t.sw * t.cone; box(t.x + Math.cos(ma) * 10, t.y + Math.sin(ma) * 10, 4, '#ffffff');
+    if (st) box(t.x, t.y - 14, 4, S.t % 8 < 4 ? '#ffff40' : '#ff4040');
+    if (t.def.tipo !== 'aura') { const ma = t.dir - t.cone / 2 + t.sw * t.cone; box(t.x + Math.cos(ma) * 10, t.y + Math.sin(ma) * 10, 4, '#ffffff'); }
   }
   for (const g of S.gob) {
-    const s = g.r * 2, c = g.flash > 0 ? '#ffffff' : g.slow > 0 ? '#6fd6ff' : g.d.cor;
+    const s = g.r * 2, c = g.flash > 0 ? '#ffffff' : g.burn > 0 ? '#ff8a2c' : g.slow > 0 ? '#6fd6ff' : g.d.cor;
     if (g.d.enxame) box(g.x, g.y, s, c); else { box(g.x, g.y, s, g.d.cor2); box(g.x, g.y, s - 2, c); box(g.x + 2, g.y - 2, 2, '#ff3030'); }
     if (g.hp < g.max) { const w = q(s * g.hp / g.max); ctx.fillStyle = '#400'; ctx.fillRect(q(g.x - g.r), q(g.y - g.r - 4), s, 2); ctx.fillStyle = '#4f4'; ctx.fillRect(q(g.x - g.r), q(g.y - g.r - 4), w, 2); }
   }
@@ -297,17 +416,18 @@ function draw() {
   // fantasma da torre / alcance
   const over = S.tow.find(t => Math.hypot(t.x - S.mx, t.y - S.my) < 12);
   if (S.aim) drawAim();
-  else if (over) coneFx(over.x, over.y, tStat(over).alc, over.dir, over.cone, '#ffffff');
-  else { const d = TOWERS[S.sel]; ring(S.mx, S.my, d.alcance * (1 + ef(PRE[S.sel] + '_alc')), canPlace(S.mx, S.my) && !cheio(S.sel) ? '#ffffff' : '#ff4040'); box(S.mx, S.my, 10, d.cor); }
+  else if (over && over.def.tipo !== 'aura') coneFx(over.x, over.y, tStat(over).alc, over.dir, over.cone, '#ffffff');
+  else { const d = TOWERS[S.sel]; ring(S.mx, S.my, d.alcance * (1 + ef(PRE[S.sel] + '_alc')) * (MAPA.mod.alc || 1) * nevoaF(S.mx, S.my), canPlace(S.mx, S.my) && !cheio(S.sel) ? '#ffffff' : '#ff4040'); box(S.mx, S.my, 10, d.cor); }
   // HUD
   drawHud();
   if (S.aim) txt(`Mire com o mouse · roda: cone ${Math.round(S.aim.cone * 180 / Math.PI)}° · clique: confirmar · direito/Esc: cancelar`, CFG.W / 2, CFG.H - 28, '#ffffff', 'center');
-  if (S.over) { ctx.fillStyle = '#000'; ctx.fillRect(280, 250, 400, 90); ctx.fillStyle = S.won ? '#6fd66f' : '#ff4040'; ctx.font = 'bold 28px monospace'; ctx.fillText(S.won ? 'VITÓRIA!' : 'FIM DE JOGO', 380, 292); ctx.fillStyle = '#fff'; ctx.font = '14px monospace'; ctx.fillText(`Castelo ${S.hp} · +${S.ganho} moedas · clique ou R`, 310, 320); }
+  if (S.over) { ctx.fillStyle = '#000'; ctx.fillRect(280, 250, 400, S.novoMapa ? 112 : 90); ctx.fillStyle = S.won ? '#6fd66f' : '#ff4040'; ctx.font = 'bold 28px monospace'; ctx.fillText(S.won ? 'VITÓRIA!' : 'FIM DE JOGO', 380, 292); ctx.fillStyle = '#fff'; ctx.font = '14px monospace'; ctx.fillText(`Castelo ${S.hp} · +${S.ganho} moedas · clique ou R`, 310, 320); if (S.novoMapa) { ctx.fillStyle = '#ffd84c'; ctx.fillText(`Mapa desbloqueado: ${S.novoMapa}`, 310, 342); } }
 }
 
 // ---------- entrada ----------
 function canPlace(x, y) {
-  return y > 72 && nearPath(x, y).d > MAPA.larg / 2 + 12 && baseDist(x, y) > CFG.baseR + 24 && !S.tow.some(t => Math.hypot(t.x - x, t.y - y) < 20);
+  return y > 72 && nearPath(x, y).d > MAPA.larg / 2 + 12 && baseDist(x, y) > CFG.baseR + 24 && !S.tow.some(t => Math.hypot(t.x - x, t.y - y) < 20)
+    && ![...MAPA.bloq, ...MAPA.muros].some(b => x > b[0] - 6 && x < b[0] + b[2] + 6 && y > b[1] - 6 && y < b[1] + b[3] + 6);
 }
 function pos(e) { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * CFG.W / r.width, (e.clientY - r.top) * CFG.H / r.height]; }
 cv.addEventListener('mousemove', e => [S.mx, S.my] = pos(e));
@@ -328,9 +448,12 @@ cv.addEventListener('click', e => {
     return;
   }
   const [x, y] = pos(e), t = S.tow.find(t => Math.hypot(t.x - x, t.y - y) < 12);
-  if (t) { S.aim = { x: t.x, y: t.y, def: t.def, k: t.k, dir: t.dir, cone: t.cone, edit: t }; return; }
+  if (t) { if (t.def.tipo !== 'aura') S.aim = { x: t.x, y: t.y, def: t.def, k: t.k, dir: t.dir, cone: t.cone, edit: t }; return; }
   const def = TOWERS[S.sel];
-  if (!cheio(S.sel) && livre(S.sel) && canPlace(x, y)) { const n = nearPath(x, y); S.aim = { x: q(x), y: q(y), def, k: S.sel, dir: Math.atan2(n.y - y, n.x - x), cone: rad(def.cone), edit: null }; }
+  if (!cheio(S.sel) && livre(S.sel) && canPlace(x, y)) {
+    if (def.tipo === 'aura') { S.tow.push({ x: q(x), y: q(y), def, k: S.sel, lvl: 1, cd: 0, dir: 0, cone: 0, sw: 0, sd: 1 }); buildShop(); return; } // totem não precisa mirar
+    const n = nearPath(x, y); S.aim = { x: q(x), y: q(y), def, k: S.sel, dir: Math.atan2(n.y - y, n.x - x), cone: rad(def.cone), edit: null };
+  }
 });
 addEventListener('keydown', e => {
   if (!metaEl.hidden || !menuEl.hidden) return;
@@ -346,10 +469,10 @@ addEventListener('keydown', e => {
 // ---------- melhorias permanentes (painel) ----------
 const metaEl = document.getElementById('meta'), btnMeta = document.getElementById('melhorias');
 // fundo do mar da skill tree (pré-renderizado) e raiz
-const SEA = document.createElement('canvas'); SEA.width = CFG.W; SEA.height = CFG.H;
+const SEA = document.createElement('canvas'); SEA.width = CFG.W; SEA.height = TREE_H;
 (function () {
-  const b = SEA.getContext('2d'); b.fillStyle = '#0f3552'; b.fillRect(0, 0, CFG.W, CFG.H); b.fillStyle = '#174a6e';
-  for (let i = 0; i < 700; i++) b.fillRect(q((i * 97) % CFG.W), q((i * 53 + (i * i) % 211) % CFG.H), 6 + (i % 3) * 2, 2);
+  const b = SEA.getContext('2d'); b.fillStyle = '#0f3552'; b.fillRect(0, 0, CFG.W, TREE_H); b.fillStyle = '#174a6e';
+  for (let i = 0; i < 1250; i++) b.fillRect(q((i * 97) % CFG.W), q((i * 53 + (i * i) % 211) % TREE_H), 6 + (i % 3) * 2, 2);
 })();
 let TC, treeHover = null;
 const aberto = id => { const p = TREE[id].pai; return !p || !!ROOTS[p] || pk(p) > 0; };
@@ -383,35 +506,39 @@ function drawTree() {
     const x0 = q(n.x - p.mx * 3);
     for (let i = 0; i < p.mx; i++) { t.fillStyle = l > i ? '#ffd84c' : '#10161e'; t.fillRect(x0 + i * 6, n.y + 28, 4, 4); }
     ttx(t, p.n.toUpperCase(), n.x, n.y + 46, '#ffffff');
-    if (max) ttx(t, 'MÁX', n.x + 26, n.y - 26, '#ffd84c', 'left');
+    if (max) ttx(t, 'MÁX', n.x, n.y - 29, '#ffd84c', 'center');
     else if (ab) { nb(n.x + 30, n.y - 29, 6, '#ffffff'); ttx(t, String(c), n.x + 36, n.y - 26, ok ? '#6fd66f' : '#ff6060', 'left'); }
   }
-  // moedas
-  t.fillStyle = '#1c2a44'; t.fillRect(340, 10, 280, 36); t.fillStyle = '#10161e'; t.fillRect(344, 14, 272, 28);
-  nb(366, 28, 12, '#b88a10'); nb(366, 28, 8, '#ffd84c');
-  ttx(t, `MOEDAS ${META.moedas}`, 384, 34, '#ffd84c', 'left', 'bold 16px monospace');
-  if (S.ganho) ttx(t, `+${S.ganho}`, 600, 34, '#6fd66f', 'right', 'bold 14px monospace');
-  // dica do nó
+  // moedas (cabeçalho fixo do painel)
+  const mc = metaEl.querySelector('#mcoins'); if (mc) mc.textContent = `MOEDAS ${META.moedas}` + (S.ganho ? `  (+${S.ganho} na última run)` : '');
+  // dica do nó (ao lado do nó, para aparecer onde o mouse está)
   if (treeHover) {
-    const p = PERKS[treeHover], l = pk(treeHover);
-    t.fillStyle = '#1c2a44'; t.fillRect(16, 520, 420, 64); t.fillStyle = '#10161e'; t.fillRect(20, 524, 412, 56);
-    ttx(t, `${p.n} · Nv ${l}/${p.mx}`, 30, 544, '#ffffff', 'left', 'bold 14px monospace');
-    ttx(t, p.d, 30, 562, '#cccccc', 'left', '12px monospace');
-    ttx(t, aberto(treeHover) ? (l >= p.mx ? 'Nível máximo' : `Custo: ${custoPerk(p, l)} moedas`) : `Bloqueado: requer ${PERKS[TREE[treeHover].pai].n}`, 30, 576, aberto(treeHover) ? '#ffd84c' : '#ff6060', 'left', '12px monospace');
+    const p = PERKS[treeHover], l = pk(treeHover), nn = TREE[treeHover], ox = Math.max(8, Math.min(CFG.W - 428, nn.x - 210)), oy = nn.y + 134 > TREE_H ? nn.y - 150 : nn.y + 62;
+    t.fillStyle = '#1c2a44'; t.fillRect(ox, oy, 420, 64); t.fillStyle = '#10161e'; t.fillRect(ox + 4, oy + 4, 412, 56);
+    ttx(t, `${p.n} · Nv ${l}/${p.mx}`, ox + 14, oy + 24, '#ffffff', 'left', 'bold 14px monospace');
+    ttx(t, p.d, ox + 14, oy + 42, '#cccccc', 'left', '12px monospace');
+    ttx(t, aberto(treeHover) ? (l >= p.mx ? 'Nível máximo' : `Custo: ${custoPerk(p, l)} moedas`) : `Bloqueado: requer ${PERKS[TREE[treeHover].pai].n}`, ox + 14, oy + 56, aberto(treeHover) ? '#ffd84c' : '#ff6060', 'left', '12px monospace');
   }
 }
 function buildMeta() {
-  metaEl.innerHTML = '<canvas id="tree"></canvas><button id="fechar">Jogar</button><button id="resetar">Resetar árvore e moedas</button>';
-  TC = metaEl.querySelector('#tree'); TC.width = CFG.W; TC.height = CFG.H; treeHover = null;
+  metaEl.innerHTML = '<div id="mhead"><span id="mcoins"></span><button id="fechar">Jogar</button><button id="resetar">↺ Redefinir</button></div><div class="mapas"></div><canvas id="tree"></canvas>';
+  buildMapas();
+  TC = metaEl.querySelector('#tree'); TC.width = CFG.W; TC.height = TREE_H; treeHover = null;
   const at = e => {
-    const r = TC.getBoundingClientRect(), x = (e.clientX - r.left) * CFG.W / r.width, y = (e.clientY - r.top) * CFG.H / r.height;
+    const r = TC.getBoundingClientRect(), x = (e.clientX - r.left) * CFG.W / r.width, y = (e.clientY - r.top) * TREE_H / r.height;
     for (const id in TREE) if (Math.abs(x - TREE[id].x) <= 24 && Math.abs(y - TREE[id].y) <= 24) return id;
     return null;
   };
   TC.onmousemove = e => { const h = at(e); if (h !== treeHover) { treeHover = h; drawTree(); } };
   TC.onclick = e => { const h = at(e); if (h) { buyPerk(h); drawTree(); } };
   metaEl.querySelector('#fechar').onclick = () => { metaEl.hidden = true; reset(); };
-  metaEl.querySelector('#resetar').onclick = () => { if (!confirm(`Resetar a árvore e zerar as moedas de ${JOGADOR}? Isso não pode ser desfeito.`)) return; META.moedas = 0; META.lv = {}; salvarMeta(); S.ganho = 0; drawTree(); };
+  // redefinir: devolve todas as moedas gastas em melhorias e zera os níveis (mapas vencidos e torres salvas permanecem)
+  metaEl.querySelector('#resetar').onclick = () => {
+    const total = Object.keys(META.lv).reduce((s, id) => s + (PERKS[id] ? PERKS[id].c.slice(0, META.lv[id]).reduce((a, b) => a + b, 0) : 0), 0);
+    if (!total) return;
+    if (!confirm(`Redefinir as melhorias de ${JOGADOR}? Você recebe de volta ${total} moedas para gastar como quiser.`)) return;
+    META.moedas += total; META.lv = {}; salvarMeta(); drawTree();
+  };
   drawTree();
 }
 btnMeta.onclick = () => { if (!btnMeta.disabled) { buildMeta(); metaEl.hidden = false; } btnMeta.blur(); };
@@ -421,6 +548,7 @@ const limpaNome = s => (s || '').trim().slice(0, 12).replace(/[^\w\u00C0-\u017F 
 function renderMenu() {
   const quem = menuEl.querySelector('#quem');
   quem.hidden = pedindo; quem.textContent = `Jogador: ${JOGADOR} \u00b7 ${META.moedas} moedas`;
+  menuEl.querySelector('.mapas').hidden = pedindo;
   menuEl.querySelector('#novo').hidden = !pedindo;
   if (pedindo) nomeEl.focus();
 }
@@ -428,7 +556,7 @@ function abrirMenu() { metaEl.hidden = true; menuEl.hidden = false; renderMenu()
 function nomeOk() {
   if (!pedindo) return true;
   const n = limpaNome(nomeEl.value); if (!n) { nomeEl.focus(); return false; }
-  carregarMeta(n); salvarMeta(); pedindo = false; nomeEl.value = ''; return true;
+  carregarMeta(n); setMapa(mapaInicial()); salvarMeta(); pedindo = false; nomeEl.value = ''; return true;
 }
 menuEl.querySelector('#mJogar').onclick = () => { if (nomeOk()) { menuEl.hidden = true; reset(); } };
 menuEl.querySelector('#mMelhorias').onclick = () => { if (nomeOk()) { menuEl.hidden = true; buildMeta(); metaEl.hidden = false; } };
@@ -437,7 +565,20 @@ btnJog.onclick = () => { abrirMenu(); btnJog.blur(); };
 const velBtns = document.querySelectorAll('#vel button');
 velBtns.forEach(b => b.onclick = () => { S.speed = +b.dataset.v; b.blur(); });
 const btnStart = document.getElementById('start');
+// seletor de mapas (menu principal e painel de melhorias): cada mapa abre ao vencer o anterior
+function buildMapas() {
+  document.querySelectorAll('.mapas').forEach(el => {
+    el.innerHTML = '';
+    MAPAS.forEach((m, i) => {
+      const b = document.createElement('button'), ok = desbloq(i);
+      b.textContent = ok ? `${i === MI ? '▶ ' : ''}${i + 1} ${m.nome}` : `${i + 1} 🔒`; b.disabled = !ok; b.className = i === MI ? 'sel' : ''; b.title = m.desafio || '';
+      b.onclick = () => { if (!S.ativa && i !== MI) { META.torres = {}; setMapa(i); reset(); salvarMeta(); } b.blur(); };
+      el.appendChild(b);
+    });
+  });
+}
 btnStart.onclick = () => { if (!S.ativa) startWave(); btnStart.blur(); };
+setMapa(mapaInicial());
 reset();
 abrirMenu();
 (function loop() {
