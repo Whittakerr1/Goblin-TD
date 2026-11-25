@@ -189,8 +189,18 @@ for (const [k, p, nm, c] of NOVAS) { PERKS[k] = { n: nm, d: `Libera ${nm}`, u: 1
 Object.assign(PERKS.tot_dano, { n: 'Fervor', d: '+30% bônus de dano da aura', u: 0.3 });
 Object.assign(PERKS.tot_alc, { n: 'Aura', d: '+13% raio da aura' });
 Object.assign(PERKS.tot_cad, { n: 'Ritmo', d: '+30% bônus de cadência da aura', u: 0.3 });
+// Perks únicos (um por torre, além de Tiro múltiplo / Explosão / Congelar); os efeitos são aplicados em game.js
+PERKS.bal_pen   = { n: 'Impacto',   d: '+4% dano por inimigo já atravessado (máx. +100%)', u: 0.04, c: cs(390, 1.14) };
+PERKS.tes_salto = { n: 'Condutor',  d: '+1 salto da descarga elétrica', u: 1, c: cs(560, 1.14).slice(0, 3) };
+PERKS.cha_brasa = { n: 'Brasa',     d: '+20% duração da queimadura', u: 0.2, c: cs(470, 1.14) };
+PERKS.ven_corr  = { n: 'Corrosão',  d: '+20% dano percentual da poça', u: 0.2, c: cs(660, 1.14) };
+PERKS.tot_prot  = { n: 'Escudo',    d: '-20% duração do atordoamento nas torres da aura', u: 0.2, c: cs(910, 1.14).slice(0, 4) };
 // Canhão (1490) < Balista (2200) < Chamas (3000) < Tesla (4000) < Alquimista (5200) < Gelo (6800) < Totem (8800); unidades e especiais seguem o tier
 PERKS.can_slot.c = CUSTOS.can_slot; PERKS.gel_slot.c = CUSTOS.gel_slot; PERKS.can_raio.c = CUSTOS.can_raio; PERKS.gel_dur.c = CUSTOS.gel_dur; PERKS.gelo.c = [6800];
+// Evolução (um perk por torre, exige o perk especial dela): [habilidade única, custo em moedas]
+const EVO_INFO = { arq: ['flechas +2 furo e passam muralhas', 1200], can: ['explosão com onda de choque', 1200], bal: ['virotes ignoram armadura', 1800], tes: ['dispara 2 descargas por vez', 3200],
+  cha: ['queimadura se espalha', 2400], ven: ['poças deixam inimigos lentos', 4200], gel: ['pulso congela por 1s', 5400], tot: ['torres na aura imunes a stun', 7000] };
+for (const p in EVO_INFO) PERKS[p + '_evo'] = { n: 'Evolução', d: `Evolui (+buffs): ${EVO_INFO[p][0]}`, u: 1, c: [EVO_INFO[p][1]] };
 for (const k in PERKS) PERKS[k].mx = PERKS[k].c.length;
 const custoPerk = (p, l) => p.c[l];
 // Skill tree única, x/y em 960xTREE_H; pai = perk que precisa ter nível ≥ 1, ou uma raiz de ROOTS
@@ -199,13 +209,18 @@ const ROOTS = {
   ARQ:  { x: 120, y: 210, pai: 'BASE', ic: 'ARQ', nome: 'ARQUEIRO' },
 };
 const PRE = { arqueiro: 'arq', canhao: 'can', gelo: 'gel', balista: 'bal', tesla: 'tes', chamas: 'cha', veneno: 'ven', totem: 'tot' };
+// EVOLUÇÃO (por run): com o perk <torre>_evo comprado, a torre evolui até o fim da run ao somar `share` × (inimigos que nascem na run) abates (mín. `min`, múltiplos de 50; `mult` ajusta tudo).
+// Abates creditados: da própria torre; no Gelo, de inimigos que ela retardou; no Totem, de torres dentro da aura. Evoluída: +dano/+alcance/−recarga (buff; `aura` = reforço da aura do Totem) e uma habilidade única.
+// Run típica: ~56 mil inimigos na Campina e ~48 mil no Covil do Rei (enxames contam cópia a cópia).
+const EVOL = { mult: 1, min: 200, buff: { dano: 0.35, alc: 0.15, cad: 0.2, aura: 0.5 },
+  share: { arqueiro: 0.06, canhao: 0.08, balista: 0.07, tesla: 0.06, chamas: 0.05, veneno: 0.07, gelo: 0.08, totem: 0.14 } };
 const TREE = { vida: { x: 240, y: 70, pai: 'BASE', ic: 'HP', cor: '#ff4c4c' } };
-// Skill tree em serpentina: 8 torres em blocos de 240px; liberar uma exige a anterior (ordem crescente de custo). Cada bloco: liberar → dano/alcance/cadência/unidade (todos filhos diretos);
-// o perk especial (Tiro múltiplo, Explosão, Congelar) fica sob o alcance. Linha 1 vai da esquerda p/ direita, linha 2 volta.
+// Skill tree em serpentina: 8 torres em blocos de 240px; liberar uma exige a anterior (na ordem da serpentina). Cada bloco: liberar → dano/alcance/cadência/unidade (todos filhos diretos);
+// o perk especial (Tiro múltiplo, Explosão, Congelar, Impacto, Condutor, Brasa, Corrosão, Escudo) fica sob o alcance. Linha 1 vai da esquerda p/ direita, linha 2 volta.
 const TREE_H = 920;
-const CADEIA = [['arqueiro', 'arq', 120, 210, 'ARQ'], ['canhao', 'can', 360, 210, 'CAN'], ['balista', 'bal', 600, 210, 'BAL'], ['chamas', 'cha', 840, 210, 'CHA'],
-  ['tesla', 'tes', 840, 600, 'TES'], ['veneno', 'ven', 600, 600, 'ALQ'], ['gelo', 'gel', 360, 600, 'ICE'], ['totem', 'tot', 120, 600, 'TOT']];
-const ESPECIAL = { arq: ['arq_multi', 'x2'], can: ['can_raio', 'AOE'], gel: ['gel_dur', 'DUR'] };
+const CADEIA = [['arqueiro', 'arq', 120, 210, 'ARQ'], ['canhao', 'can', 360, 210, 'CAN'], ['balista', 'bal', 600, 210, 'BAL'], ['gelo', 'gel', 840, 210, 'ICE'],
+  ['tesla', 'tes', 840, 600, 'TES'], ['veneno', 'ven', 600, 600, 'ALQ'], ['chamas', 'cha', 360, 600, 'CHA'], ['totem', 'tot', 120, 600, 'TOT']];
+const ESPECIAL = { arq: ['arq_multi', 'x2'], can: ['can_raio', 'AOE'], gel: ['gel_dur', 'DUR'], bal: ['bal_pen', 'PEN'], tes: ['tes_salto', 'ARC'], cha: ['cha_brasa', 'FOG'], ven: ['ven_corr', 'COR'], tot: ['tot_prot', 'ESC'] };
 CADEIA.forEach(([k, p, x, y, ic], i) => {
   const raiz = i === 0;
   if (!raiz) TREE[k] = { x, y, pai: CADEIA[i - 1][0] === 'arqueiro' ? 'ARQ' : CADEIA[i - 1][0], ic, cor: TOWERS[k].cor };
@@ -214,7 +229,10 @@ CADEIA.forEach(([k, p, x, y, ic], i) => {
   TREE[p + '_alc'] = { x: x - 30, y: y + 120, pai: f, ic: 'RNG', cor: '#6fd6ff' };
   TREE[p + '_cad'] = { x: x + 30, y: y + 120, pai: f, ic: 'CAD', cor: '#ffd84c' };
   TREE[p + '_slot'] = { x: x + 90, y: y + 120, pai: f, ic: 'UNI', cor: '#c8903c' };
-  if (ESPECIAL[p]) TREE[ESPECIAL[p][0]] = { x: x - 30, y: y + 230, pai: p + '_alc', ic: ESPECIAL[p][1], cor: '#ffffff' };
+  if (ESPECIAL[p]) {
+    TREE[ESPECIAL[p][0]] = { x: x - 30, y: y + 230, pai: p + '_alc', ic: ESPECIAL[p][1], cor: '#ffffff' };
+    TREE[p + '_evo'] = { x: x + 30, y: y + 230, pai: ESPECIAL[p][0], ic: 'EVO', cor: '#ff9bf0' };
+  }
 });
 // BALANCEAMENTO (simulador headless): moedas = abates / ABATES_POR_MOEDA.
 //   sem melhorias ~14 abates · +Mira/Tiro múltiplo ~120 · +2 unidades ~470 · arqueiros maxados ~2000 · +Canhão ~4600 (vitória).

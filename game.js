@@ -113,7 +113,7 @@ function setMapa(i) { MI = i; MAPA = MAPAS[i]; RUN_FRAMES = runFrames(MAPA); MET
 function reset() {
   S = { run: 0, hp: CFG.baseHp + ef('vida'), kills: 0, ganho: 0, wave: 0, gob: [], tow: [], proj: [], part: [], zon: [], groups: [],
         sel: 'arqueiro', over: false, won: false, pause: false, speed: (S && S.speed) || 1, t: 0, mx: 0, my: 0, ativa: false, prox: 300, aim: null };
-  S.plano = planoHorda();
+  S.plano = planoHorda(); S.total = S.plano.reduce((n, g) => n + g.list.length, 0); S.need = {}; for (const k in TOWERS) S.need[k] = evolNeed(k);
   // restaura as torres salvas ao fim da última run (respeitando unidades liberadas e vagas)
   for (const t of tmapa()[MI] || []) if (TOWERS[t.k] && livre(t.k) && !cheio(t.k) && canPlace(t.x, t.y)) S.tow.push({ x: t.x, y: t.y, def: TOWERS[t.k], k: t.k, lvl: t.lvl || 1, cd: 0, dir: t.dir, cone: t.cone, sw: 0, sd: 1 });
   buildShop();
@@ -176,61 +176,86 @@ function ringFx(x, y, r, c1, c2) {
   for (let a = 0; a < 6.28; a += 6 / r) S.part.push({ x: x + Math.cos(a) * r, y: y + Math.sin(a) * r, vx: 0, vy: 0, life: 14, max: 14, c1, c2 });
 }
 
-function hit(g, dmg, pura) { if (g.d.armor && !pura) dmg = Math.max(1, dmg - g.d.armor); g.hp -= dmg; g.flash = 3; if (g.hp <= 0 && !g.dead) { g.dead = true; S.kills++; burst(g.x, g.y, g.d.enxame ? 2 : 6, g.d.cor, g.d.cor2); } }
+// EVOLUÇÃO: meta de abates por torre = EVOL.share × inimigos que nascem na run (S.total). Ao atingi-la a torre evolui até o fim da run (buffs em tStat/auraR/bonus/fire; habilidade única em fire/raio/updateTowers/updateGoblins/updateExtras/stunar)
+const evolNeed = k => Math.max(EVOL.min, Math.round(S.total * EVOL.share[k] * EVOL.mult / 50) * 50);
+function evolve(t) { t.evo = true; ringFx(t.x, t.y, 22, '#ffffff', t.def.cor); ringFx(t.x, t.y, 32, t.def.cor, t.def.cor2); burst(t.x, t.y, 28, '#ffffff', '#ffd84c', 3); }
+function credita(t) { if (t.evo || !(pk(PRE[t.k] + '_evo') > 0)) return; t.kills = (t.kills || 0) + 1; if (t.kills >= S.need[t.k]) evolve(t); }
+// abate de `src`: conta para ela, para os Totens cuja aura cobre `src` e, no Gelo, para a torre que retardou o inimigo
+function credito(src, g) {
+  credita(src);
+  for (const o of S.tow) if (o !== src && o.def.tipo === 'aura' && !(o.stun > 0) && Math.hypot(o.x - src.x, o.y - src.y) <= auraR(o)) credita(o);
+  if (g.slow > 0 && g.slowSrc && g.slowSrc !== src) credita(g.slowSrc);
+}
+// Chamas evoluída: a queimadura salta para até 3 vizinhos a cada tick (g.sp = saltos restantes)
+function alastra(g, grid) {
+  let n = 0;
+  for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) { const c = grid[g.ci + ox + oy * COLS]; if (c) for (const o of c) if (n < 3 && !o.dead && !(o.burn > 0) && Math.hypot(o.x - g.x, o.y - g.y) < 14) { o.burn = 45; o.bd = g.bd; o.sp = g.sp - 1; o.burnSrc = g.burnSrc; n++; } }
+}
+// barra de progresso da evolução sob a torre (só com o perk comprado)
+function evoBar(t) {
+  if (t.evo || !(pk(PRE[t.k] + '_evo') > 0)) return;
+  ctx.fillStyle = '#10161e'; ctx.fillRect(q(t.x - 8), q(t.y + 15), 16, 2); ctx.fillStyle = '#ffd84c'; ctx.fillRect(q(t.x - 8), q(t.y + 15), q(16 * Math.min(1, (t.kills || 0) / S.need[t.k])), 2);
+}
+function hit(g, dmg, pura, src) { if (g.d.armor && !pura) dmg = Math.max(1, dmg - g.d.armor); g.hp -= dmg; g.flash = 3; if (g.hp <= 0 && !g.dead) { g.dead = true; S.kills++; burst(g.x, g.y, g.d.enxame ? 2 : 6, g.d.cor, g.d.cor2); if (src) credito(src, g); } }
 
 // ---------- torres ----------
 // Totem: aura que soma dano/cadência às torres dentro do raio (acumula entre Totens; Totem atordoado não funciona)
 // neblina local: torres dentro de uma zona têm o alcance multiplicado por f
 const nevoaF = (x, y) => { let f = 1; for (const z of MAPA.nevoas) if (Math.hypot(x - z.x, y - z.y) < z.r) f = Math.min(f, z.f); return f; };
-const auraR = o => o.def.alcance * (1 + ef('tot_alc')) * (MAPA.mod.alc || 1) * nevoaF(o.x, o.y);
+const auraR = o => o.def.alcance * (1 + ef('tot_alc')) * (MAPA.mod.alc || 1) * nevoaF(o.x, o.y) * (o.evo ? 1 + EVOL.buff.alc : 1);
 function bonus(t) {
   let d = 0, c = 0;
-  for (const o of S.tow) if (o.def.tipo === 'aura' && o !== t && !(o.stun > 0) && Math.hypot(o.x - t.x, o.y - t.y) <= auraR(o)) { d += o.def.buffD * (1 + ef('tot_dano')); c += o.def.buffC * (1 + ef('tot_cad')); }
+  for (const o of S.tow) if (o.def.tipo === 'aura' && o !== t && !(o.stun > 0) && Math.hypot(o.x - t.x, o.y - t.y) <= auraR(o)) { d += o.def.buffD * (1 + ef('tot_dano')) * (o.evo ? 1 + EVOL.buff.aura : 1); c += o.def.buffC * (1 + ef('tot_cad')) * (o.evo ? 1 + EVOL.buff.aura : 1); }
   return { d: Math.min(d, 1.5), c: Math.min(c, 1) };
 }
-const tStat = t => ({ dano: t.def.dano * (1 + 0.5 * (t.lvl - 1)) * (1 + ef(PRE[t.k] + '_dano')) * (1 + bonus(t).d), alc: t.def.alcance * (1 + 0.1 * (t.lvl - 1)) * (1 + ef(PRE[t.k] + '_alc')) * (MAPA.mod.alc || 1) * nevoaF(t.x, t.y) });
+const tStat = t => ({ dano: t.def.dano * (1 + 0.5 * (t.lvl - 1)) * (1 + ef(PRE[t.k] + '_dano')) * (1 + bonus(t).d) * (t.evo ? 1 + EVOL.buff.dano : 1), alc: t.def.alcance * (1 + 0.1 * (t.lvl - 1)) * (1 + ef(PRE[t.k] + '_alc')) * (MAPA.mod.alc || 1) * nevoaF(t.x, t.y) * (t.evo ? 1 + EVOL.buff.alc : 1) });
 const baseDist = (x, y) => Math.hypot(CFG.baseX - x, CFG.baseY - y);
+// atordoa a torre; Escudo do Totem encurta o atordoamento de torres dentro de uma aura; Totem evoluído torna as torres da aura imunes
+const naAura = (t, f) => S.tow.some(o => o.def.tipo === 'aura' && !(o.stun > 0) && f(o) && Math.hypot(o.x - t.x, o.y - t.y) <= auraR(o));
+const protegida = t => pk('tot_prot') > 0 && naAura(t, () => true);
+const stunar = (t, d) => { if (naAura(t, o => o.evo)) return; t.stun = Math.max(t.stun || 0, Math.round(d * (1 - (protegida(t) ? ef('tot_prot') : 0)))); };
 
 function arcFx(x, y, r, a0, a1, c1, c2) {
   for (let a = a0; a <= a1; a += 6 / r) S.part.push({ x: x + Math.cos(a) * r, y: y + Math.sin(a) * r, vx: 0, vy: 0, life: 14, max: 14, c1, c2 });
 }
-const mkProj = (t, ang, st, def) => ({ x: t.x, y: t.y, vx: Math.cos(ang) * def.vel, vy: Math.sin(ang) * def.vel, def, dano: st.dano, raio: def.raio ? def.raio * (def.tipo === 'bomba' ? 1 + ef('can_raio') : 1) : 0, rest: st.alc, furo: def.tipo === 'flecha' ? pk('arq_dano') : 0 });
+const mkProj = (t, ang, st, def) => ({ x: t.x, y: t.y, vx: Math.cos(ang) * def.vel, vy: Math.sin(ang) * def.vel, def, dano: st.dano, raio: def.raio ? def.raio * (def.tipo === 'bomba' ? 1 + ef('can_raio') : 1) : 0, rest: st.alc, furo: def.tipo === 'flecha' ? pk('arq_dano') + (t.evo ? 2 : 0) : 0, src: t });
 
 // Tesla: mira sozinha (goblin mais adiantado dentro do cone) e a descarga salta entre vizinhos próximos; raio em blocos 4px (branco → tom escuro ao dissipar)
 function lineFx(x0, y0, x1, y1) {
   const n = Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0) / 4));
   for (let i = 0; i <= n; i++) { const k = i / n, j = i > 0 && i < n ? rnd(-3, 3) : 0; S.part.push({ x: x0 + (x1 - x0) * k + j, y: y0 + (y1 - y0) * k + j, vx: 0, vy: 0, life: 8, max: 8, c1: '#ffffff', c2: '#a08010' }); }
 }
-function raio(t, st) {
+function raio(t, st, ex) {
   const def = t.def; let g = null;
-  for (const o of S.gob) { if (o.dead) continue; const dx = o.x - t.x, dy = o.y - t.y; if (dx * dx + dy * dy <= st.alc * st.alc && angD(Math.atan2(dy, dx), t.dir) <= t.cone / 2 + 0.1 && (!g || o.prog > g.prog)) g = o; }
+  for (const o of S.gob) { if (o.dead) continue; const dx = o.x - t.x, dy = o.y - t.y; if (dx * dx + dy * dy <= st.alc * st.alc && angD(Math.atan2(dy, dx), t.dir) <= t.cone / 2 + 0.1 && (!g || o.prog > g.prog) && !(ex && ex.has(o))) g = o; }
   if (!g) return;
-  const vis = new Set(); let px = t.x, py = t.y;
-  for (let i = 0; g && i <= def.cadeia; i++) {
-    lineFx(px, py, g.x, g.y); hit(g, st.dano); vis.add(g); px = g.x; py = g.y;
+  const vis = new Set(ex); let px = t.x, py = t.y;
+  for (let i = 0; g && i <= def.cadeia + pk('tes_salto'); i++) {
+    lineFx(px, py, g.x, g.y); hit(g, st.dano, false, t); vis.add(g); px = g.x; py = g.y;
     const ci = ((g.x / CELL) | 0) + 1 + ((g.y / CELL) | 0) * COLS; let nx = null, nd = def.elo;
     for (let oy = -2; oy <= 2; oy++) for (let ox = -2; ox <= 2; ox++) { const c = GRID[ci + ox + oy * COLS]; if (c) for (const o of c) if (!o.dead && !vis.has(o)) { const d = Math.hypot(o.x - px, o.y - py); if (d < nd) { nd = d; nx = o; } } }
     g = nx;
   }
+  return vis;
 }
 // Torres não miram: varrem o cone (ponta a ponta, ida e volta) e atiram em linha reta; só disparam se houver goblin dentro do cone
 function fire(t) {
   const st = tStat(t), def = t.def, N = CONE_CFG.passos;
   if (!S.gob.some(g => { if (g.dead) return false; const dx = g.x - t.x, dy = g.y - t.y; return dx * dx + dy * dy <= st.alc * st.alc && angD(Math.atan2(dy, dx), t.dir) <= t.cone / 2 + 0.1; })) return;
-  t.cd = def.cd * (1 - ef(PRE[t.k] + '_cad')) / (1 + bonus(t).c);
+  t.cd = def.cd * (1 - ef(PRE[t.k] + '_cad')) / (1 + bonus(t).c) * (t.evo ? 1 - EVOL.buff.cad : 1);
   const a = t.dir - t.cone / 2 + t.sw * t.cone, step = 1 / (N - 1);
   let nx = t.sw + t.sd * step; if (nx > 1.0001 || nx < -0.0001) { t.sd = -t.sd; nx = t.sw + t.sd * step; } t.sw = nx;
   if (def.tipo === 'pulso' || def.tipo === 'fogo') {
     const hw = t.cone / N;
     for (const g of S.gob) {
       const dx = g.x - t.x, dy = g.y - t.y;
-      if (!g.dead && dx * dx + dy * dy <= st.alc * st.alc && angD(Math.atan2(dy, dx), a) <= hw) { if (def.tipo === 'fogo') { g.burn = def.queima; g.bd = st.dano * def.queimaD; } else g.slow = def.slowT * (1 + ef('gel_dur')); hit(g, st.dano); }
+      if (!g.dead && dx * dx + dy * dy <= st.alc * st.alc && angD(Math.atan2(dy, dx), a) <= hw) { if (def.tipo === 'fogo') { g.burn = Math.round(def.queima * (1 + ef('cha_brasa'))); g.bd = st.dano * def.queimaD; g.burnSrc = t; g.sp = t.evo ? 3 : 0; } else { g.slow = def.slowT * (1 + ef('gel_dur')); g.slowSrc = t; if (t.evo && !g.d.boss) g.frz = 60; } hit(g, st.dano, false, t); }
     }
     arcFx(t.x, t.y, st.alc * 0.5, a - hw, a + hw, '#ffffff', def.cor2); arcFx(t.x, t.y, st.alc, a - hw, a + hw, def.cor, def.cor2);
   } else if (def.tipo === 'flecha') {
     const n = 1 + pk('arq_multi');
     for (let i = 0; i < n; i++) S.proj.push(mkProj(t, a + (i - (n - 1) / 2) * 0.14, st, def));
-  } else if (def.tipo === 'raio') raio(t, st);
+  } else if (def.tipo === 'raio') { const v = raio(t, st); if (t.evo && v) raio(t, st, v); }
   else S.proj.push(mkProj(t, a, st, def));
 }
 
@@ -239,20 +264,21 @@ function updateTowers() {
   for (const p of S.proj) {
     p.x += p.vx; p.y += p.vy; p.rest -= p.def.vel;
     // muralhas barram flechas e virotes (bombas e poças passam por cima)
-    if (MAPA.muros.length && (p.def.tipo === 'flecha' || p.def.tipo === 'lanca') && MAPA.muros.some(m => p.x > m[0] && p.x < m[0] + m[2] && p.y > m[1] && p.y < m[1] + m[3])) { p.done = true; burst(p.x, p.y, 4, '#ffffff', '#6e6e78', 1.2); continue; }
+    if (MAPA.muros.length && (p.def.tipo === 'flecha' || p.def.tipo === 'lanca') && !(p.def.tipo === 'flecha' && p.src.evo) && MAPA.muros.some(m => p.x > m[0] && p.x < m[0] + m[2] && p.y > m[1] && p.y < m[1] + m[3])) { p.done = true; burst(p.x, p.y, 4, '#ffffff', '#6e6e78', 1.2); continue; }
     let tg = null, mt = null; const ci = ((p.x / CELL) | 0) + 1 + ((p.y / CELL) | 0) * COLS;
     hitSearch: for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
       const c = GRID && GRID[ci + ox + oy * COLS]; if (!c) continue;
       for (const g of c) { const dx = g.x - p.x, dy = g.y - p.y, rr = g.r + 6; if (!g.dead && !(p.vis && p.vis.has(g)) && dx * dx + dy * dy < rr * rr) { tg = g; if (!p.def.multi) break hitSearch; (mt = mt || []).push(g); } }
     }
-    if (mt) { p.vis = p.vis || new Set(); for (const g of mt) { hit(g, p.dano); p.vis.add(g); } } // balista: atravessa todos na linha
-    else if (tg && p.furo > 0) { hit(tg, p.dano); p.furo--; (p.vis = p.vis || new Set()).add(tg); } // perfuração: atravessa e segue
+    if (mt) { p.vis = p.vis || new Set(); for (const g of mt) { hit(g, p.dano * (1 + Math.min(1, ef('bal_pen') * p.vis.size)), !!p.src.evo, p.src); p.vis.add(g); } } // balista: atravessa todos na linha; Impacto soma dano por inimigo já atravessado
+    else if (tg && p.furo > 0) { hit(tg, p.dano, false, p.src); p.furo--; (p.vis = p.vis || new Set()).add(tg); } // perfuração: atravessa e segue
     else if (tg || p.rest <= 0) {
       p.done = true;
-      if (p.def.tipo === 'flecha' || p.def.tipo === 'lanca') { if (tg) hit(tg, p.dano); }
-      else if (p.def.tipo === 'poca') { S.zon.push({ x: p.x, y: p.y, r: p.raio, life: p.def.dur, tick: p.def.tick, dano: p.dano, pct: p.def.pct * p.dano / p.def.dano }); burst(p.x, p.y, 10, '#b8ff8a', p.def.cor2, 1.4); }
+      if (p.def.tipo === 'flecha' || p.def.tipo === 'lanca') { if (tg) hit(tg, p.dano, false, p.src); }
+      else if (p.def.tipo === 'poca') { S.zon.push({ x: p.x, y: p.y, r: p.raio, life: p.def.dur, tick: p.def.tick, dano: p.dano, pct: p.def.pct * p.dano / p.def.dano * (1 + ef('ven_corr')), src: p.src, evo: p.src.evo }); burst(p.x, p.y, 10, '#b8ff8a', p.def.cor2, 1.4); }
       else {
-        for (const g of S.gob) if (!g.dead && Math.hypot(g.x - p.x, g.y - p.y) < p.raio) hit(g, p.dano);
+        for (const g of S.gob) if (!g.dead && Math.hypot(g.x - p.x, g.y - p.y) < p.raio) hit(g, p.dano, false, p.src);
+        if (p.src.evo) { const R2 = p.raio * 1.7; for (const g of S.gob) { const d = Math.hypot(g.x - p.x, g.y - p.y); if (!g.dead && d >= p.raio && d < R2) hit(g, p.dano * 0.5, false, p.src); } ringFx(p.x, p.y, R2 * 0.9, '#ffffff', '#ffb030'); }
         burst(p.x, p.y, 14, '#ffffff', '#ffb030', 2.4); ringFx(p.x, p.y, p.raio * 0.6, '#ffb030', '#7a3a10');
       }
     }
@@ -271,14 +297,14 @@ function updateGoblins() {
     if (!voa && d < 30 && g.wp < P.length - 1) g.wp++;
     g.prog = (voa ? P.length : g.wp) * 1e4 - d;
     if (baseDist(g.x, g.y) < CFG.baseR) { S.hp -= g.d.dano; g.dead = true; burst(g.x, g.y, 8, '#ff4040', '#802020'); if (S.hp <= 0) { S.hp = 0; S.over = true; } continue; }
-    if (g.burn > 0) { g.burn--; if (g.burn % 15 === 0) { hit(g, g.bd, true); if (g.dead) continue; } } // queimadura ignora armadura
+    if (g.burn > 0) { g.burn--; if (g.burn % 15 === 0) { if (g.sp > 0) alastra(g, grid); hit(g, g.bd, true, g.burnSrc); if (g.dead) continue; } } // queimadura ignora armadura
     if (g.d.sabota) { // sapador: explode perto de torre e a atordoa por 6s
-      for (const t of S.tow) if (Math.hypot(t.x - g.x, t.y - g.y) < g.d.sab) { t.stun = Math.max(t.stun || 0, 360); g.dead = true; ringFx(g.x, g.y, 14, '#ffffff', g.d.cor2); burst(g.x, g.y, 10, g.d.cor, g.d.cor2, 2); break; }
+      for (const t of S.tow) if (Math.hypot(t.x - g.x, t.y - g.y) < g.d.sab) { stunar(t, 360); g.dead = true; ringFx(g.x, g.y, 14, '#ffffff', g.d.cor2); burst(g.x, g.y, 10, g.d.cor, g.d.cor2, 2); break; }
       if (g.dead) continue;
     }
     if (g.d.cura) xamas.push(g);
     if (g.d.invoca && S.t % g.d.invoca === 0) for (let i = 0; i < 12; i++) nasc.push(mkG('comum', g.x + rnd(-14, 14), g.y + rnd(-14, 14), g.wp, g.rt, g.vm, GOBLINS.comum.hp));
-    const sp = g.d.vel * g.vm * (g.slow > 0 ? (g.d.boss ? 0.75 : TOWERS.gelo.slow) : 1); if (g.slow > 0) g.slow--;
+    const sp = g.frz > 0 ? 0 : g.d.vel * g.vm * (g.slow > 0 ? (g.d.boss ? 0.75 : TOWERS.gelo.slow) : 1); if (g.slow > 0) g.slow--; if (g.frz > 0) g.frz--;
     let ax = dx / d * sp, ay = dy / d * sp;
     ax += Math.cos(S.t * 0.04 + (g.d.enxame ? (g.x + g.y) * 0.04 : g.ph)) * 0.12; ay += Math.sin(S.t * 0.05 + (g.d.enxame ? (g.x - g.y) * 0.04 : g.ph)) * 0.2;
     let px = 0, py = 0;
@@ -311,17 +337,17 @@ function updateGoblins() {
 function updateExtras() {
   for (const z of S.zon) {
     z.life--;
-    if (S.t % z.tick === 0) for (const g of S.gob) if (!g.dead && g.pz !== S.t && Math.hypot(g.x - z.x, g.y - z.y) < z.r) { g.pz = S.t; hit(g, z.dano + g.max * z.pct * (g.d.boss ? 0.25 : 1), true); }
+    if (S.t % z.tick === 0) for (const g of S.gob) if (!g.dead && g.pz !== S.t && Math.hypot(g.x - z.x, g.y - z.y) < z.r) { g.pz = S.t; if (z.evo && !g.d.boss) g.slow = Math.max(g.slow, 45); hit(g, z.dano + g.max * z.pct * (g.d.boss ? 0.25 : 1), true, z.src); }
     if (S.t % 6 === 0) S.part.push({ x: z.x + rnd(-z.r, z.r) * 0.8, y: z.y + rnd(-z.r, z.r) * 0.8, vx: 0, vy: -0.3, life: 14, max: 14, c1: '#b8ff8a', c2: '#2a8a28' });
   }
   S.zon = S.zon.filter(z => z.life > 0);
   const TP = MAPA.tempestade; // tempestade: a cada `per` quadros um raio atordoa uma torre aleatória
   if (TP && S.ativa && S.run > 0 && S.run % TP.per === 0) {
     const al = S.tow.filter(t => !(t.stun > 0));
-    if (al.length) { const t = al[(Math.random() * al.length) | 0]; t.stun = Math.max(t.stun || 0, TP.stun); lineFx(t.x, t.y - 80, t.x, t.y); ringFx(t.x, t.y, 16, '#ffffff', '#a08010'); burst(t.x, t.y, 12, '#ffffff', '#ffe84c', 2.5); }
+    if (al.length) { const t = al[(Math.random() * al.length) | 0]; stunar(t, TP.stun); lineFx(t.x, t.y - 80, t.x, t.y); ringFx(t.x, t.y, 16, '#ffffff', '#a08010'); burst(t.x, t.y, 12, '#ffffff', '#ffe84c', 2.5); }
   }
   if (S.ativa) for (const h of MAPA.perigos) if (S.run > 0 && (S.run + h.off) % h.per === 0) {
-    for (const t of S.tow) if (Math.hypot(t.x - h.x, t.y - h.y) < h.r) t.stun = Math.max(t.stun || 0, h.stun);
+    for (const t of S.tow) if (Math.hypot(t.x - h.x, t.y - h.y) < h.r) stunar(t, h.stun);
     ringFx(h.x, h.y, h.r * 0.5, '#ffffff', h.cor2); ringFx(h.x, h.y, h.r, '#ffffff', h.cor2); burst(h.x, h.y, 16, '#ffffff', h.cor2, 3);
   }
 }
@@ -398,13 +424,14 @@ function draw() {
   for (const t of S.tow) {
     const st = t.stun > 0;
     if (t.def.tipo === 'aura') ring(t.x, t.y, auraR(t), st ? '#555555' : t.def.cor);
+    if (t.evo) box(t.x, t.y, 22, S.t % 12 < 6 ? '#ffd84c' : '#fff0a0');
     box(t.x, t.y, 16, st ? '#303030' : t.def.cor2); box(t.x, t.y, 10, st ? '#707070' : t.def.cor);
-    for (let i = 0; i < t.lvl; i++) box(t.x - 6 + i * 6 + 2, t.y + 11, 2, '#ffd84c');
+    for (let i = 0; i < t.lvl; i++) box(t.x - 6 + i * 6 + 2, t.y + 11, 2, '#ffd84c'); evoBar(t);
     if (st) box(t.x, t.y - 14, 4, S.t % 8 < 4 ? '#ffff40' : '#ff4040');
     if (t.def.tipo !== 'aura') { const ma = t.dir - t.cone / 2 + t.sw * t.cone; box(t.x + Math.cos(ma) * 10, t.y + Math.sin(ma) * 10, 4, '#ffffff'); }
   }
   for (const g of S.gob) {
-    const s = g.r * 2, c = g.flash > 0 ? '#ffffff' : g.burn > 0 ? '#ff8a2c' : g.slow > 0 ? '#6fd6ff' : g.d.cor;
+    const s = g.r * 2, c = g.flash > 0 ? '#ffffff' : g.frz > 0 ? '#b8f0ff' : g.burn > 0 ? '#ff8a2c' : g.slow > 0 ? '#6fd6ff' : g.d.cor;
     if (g.d.enxame) box(g.x, g.y, s, c); else { box(g.x, g.y, s, g.d.cor2); box(g.x, g.y, s - 2, c); box(g.x + 2, g.y - 2, 2, '#ff3030'); }
     if (g.hp < g.max) { const w = q(s * g.hp / g.max); ctx.fillStyle = '#400'; ctx.fillRect(q(g.x - g.r), q(g.y - g.r - 4), s, 2); ctx.fillStyle = '#4f4'; ctx.fillRect(q(g.x - g.r), q(g.y - g.r - 4), w, 2); }
   }
@@ -418,6 +445,7 @@ function draw() {
   if (S.aim) drawAim();
   else if (over && over.def.tipo !== 'aura') coneFx(over.x, over.y, tStat(over).alc, over.dir, over.cone, '#ffffff');
   else { const d = TOWERS[S.sel]; ring(S.mx, S.my, d.alcance * (1 + ef(PRE[S.sel] + '_alc')) * (MAPA.mod.alc || 1) * nevoaF(S.mx, S.my), canPlace(S.mx, S.my) && !cheio(S.sel) ? '#ffffff' : '#ff4040'); box(S.mx, S.my, 10, d.cor); }
+  if (over && !S.aim && pk(PRE[over.k] + '_evo') > 0) { ctx.font = 'bold 11px monospace'; txt(over.evo ? 'EVOLUÍDA' : `Evolução ${over.kills || 0}/${S.need[over.k]}`, over.x, over.y - 22, over.evo ? '#ffd84c' : '#ffffff', 'center'); }
   // HUD
   drawHud();
   if (S.aim) txt(`Mire com o mouse · roda: cone ${Math.round(S.aim.cone * 180 / Math.PI)}° · clique: confirmar · direito/Esc: cancelar`, CFG.W / 2, CFG.H - 28, '#ffffff', 'center');
