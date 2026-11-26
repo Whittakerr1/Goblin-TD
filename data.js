@@ -12,10 +12,10 @@ const ONDAS = (mix, chefe = []) => [
 ].map((o, i) => ({ ...o, peso0: mix[i][0], peso1: mix[i][1], chefe: chefe[i] }));
 
 // Mapas em ordem de dificuldade (o próximo só abre depois de vencer o anterior). Campos opcionais:
-//   rotas (várias entradas, cada uma começa fora da tela) · bloq [x,y,w,h] (sem torres) · muros [x,y,w,h] (sem torres e barram flechas/virotes) · nevoas {x,y,r,f} (alcance ×f nas torres dentro) ·
-//   perigos (gêiseres que atordoam torres) · tempestade {per,stun} (raio atordoa torre aleatória) · dif (escala própria) · tema · desafio (texto do HUD)
+//   rotas (várias entradas, cada uma começa fora da tela) · base [x,y] (posição do castelo; padrão CFG.baseX/baseY; último ponto de toda rota = castelo) · bloq [x,y,w,h] (sem torres) · muros [x,y,w,h] (sem torres e barram flechas/virotes) · nevoas {x,y,r,f} (alcance ×f nas torres dentro) ·
+//   perigos (gêiseres/lava que atordoam torres dentro da zona) · nevoas (alcance ×f) · ambos aceitam círculo {x,y,r} ou formas {rs:[[cx,cy,w,h],...]} (união de retângulos) · tempestade {per,stun} (raio atordoa torre aleatória) · dif (escala própria) · tema · desafio (texto do HUD)
 const MAPAS = [{
-  nome: 'Campina', nivel: 1, larg: 72, desafio: 'Sem desafios · aprenda o básico',
+  nome: 'Campina', nivel: 1, larg: 60, grama: 'assets/tilesets/tileset_grama_campina.png', desafio: 'Serpente em S · aprenda o básico',
   // Run de 6 min = 3 ondas de 2 min (dur em segundos), sem intervalo entre elas.
   // Grupos nascem a cada gap quadros (gapIni→gapFim) com tam goblins (tamIni→tamFim); a mistura vai de peso0 a peso1;
   // hp / vel = [início, fim] da onda (multiplicadores).
@@ -24,30 +24,38 @@ const MAPAS = [{
     { dur: 120, gapIni: 90,  gapFim: 45, tamIni: 8,  tamFim: 16, peso0: { comum: 1, rapido: 0.3, bruto: 0.05 }, peso1: { comum: 0.6, rapido: 0.5, bruto: 0.2 },  hp: [2, 3],     vel: [1.05, 1.1] },
     { dur: 120, gapIni: 60,  gapFim: 25, tamIni: 14, tamFim: 26, peso0: { comum: 0.6, rapido: 0.5, bruto: 0.2 }, peso1: { comum: 0.4, rapido: 0.4, bruto: 0.4 },  hp: [3.5, 6],   vel: [1.1, 1.2] },
   ],
-  pontos: [[-60, 100], [200, 100], [200, 480], [450, 480], [450, 200], [700, 200], [700, CFG.baseY], [CFG.baseX, CFG.baseY]],
+  bloq: [[90, 240, 80, 60], [720, 350, 90, 60]],
+  pontos: [[-60, 150], [600, 150], [600, 300], [280, 300], [280, 450], [CFG.baseX, 450], [CFG.baseX, CFG.baseY]],
 },
-{ nome: 'Floresta', nivel: 2, larg: 60, desafio: 'Duas entradas · Neblina nas clareiras',
+{ nome: 'Floresta', nivel: 2, larg: 44, grama: 'assets/tilesets/tileset_grama_floresta.png', desafio: 'Pente · Duas entradas · Neblina',
   tema: { g: ['#24502a', '#204824', '#2e6030'], p: ['#4a3a28', '#7a6040', '#6a5238'], ob: ['#102a10', '#1e4a1e'] },
   dif: { qtd: 1.1, hp: 1.4, vel: 1.03 },
-  nevoas: [{ x: 310, y: 310, r: 80, f: 0.6 }, { x: 640, y: 420, r: 80, f: 0.6 }],
-  bloq: [[270, 250, 80, 90], [470, 100, 80, 60], [480, 380, 130, 60], [800, 390, 90, 80]],
+  nevoas: [
+    { rs: [[375, 275, 100, 250]], f: 0.55 }, { rs: [[525, 330, 100, 250]], f: 0.55 },
+    { rs: [[705, 345, 110, 84], [795, 430, 56, 180]], f: 0.55 }, { x: 225, y: 315, r: 75, f: 0.55 },
+  ],
+  bloq: [[40, 380, 80, 90], [560, 500, 80, 60]],
   ondas: ONDAS([
     [{ comum: 1, rapido: .2, blindado: .05 }, { comum: .8, rapido: .3, bruto: .05, blindado: .15 }],
     [{ comum: .7, rapido: .4, bruto: .1, blindado: .25 }, { comum: .5, rapido: .4, bruto: .2, blindado: .4 }],
     [{ comum: .5, rapido: .4, bruto: .2, blindado: .4 }, { comum: .35, rapido: .35, bruto: .3, blindado: .55 }],
   ]),
   rotas: [
-    [[-60, 170], [200, 170], [200, 440], [420, 440], [420, 300], [CFG.baseX, CFG.baseY]],
-    [[600, -60], [600, 190], [760, 190], [760, CFG.baseY], [CFG.baseX, CFG.baseY]],
+    [[-60, 300], [150, 300], [150, 180], [300, 180], [300, 420], [450, 420], [450, 180], [600, 180], [600, 420], [760, 420], [760, 300], [CFG.baseX, CFG.baseY]],
+    [[700, 660], [700, 550], [850, 550], [850, 300], [CFG.baseX, CFG.baseY]],
   ] },
-{ nome: 'Pântano', nivel: 3, larg: 64, desafio: 'Três entradas · Gêiseres · Xamãs curam',
+{ nome: 'Pântano', nivel: 3, larg: 48, grama: 'assets/tilesets/tileset_grama_pantano.png', desafio: 'Serpentes + atalho · Gêiseres · Xamãs curam',
   tema: { g: ['#3a5a2c', '#34502a', '#4a6a34'], p: ['#3a2e20', '#6a5a3a', '#5a4a30'], ob: ['#1a2a18', '#2e4a28'] },
   dif: { qtd: 1.2, hp: 1.8, vel: 1.05 },
-  bloq: [[20, 200, 110, 150], [430, 490, 190, 70], [60, 545, 140, 55]],
+  bloq: [[760, 330, 80, 50]],
+  // gêiseres em faixas sobre os melhores pontos de tiro (entre as serpentes) + dois grandes círculos na área aberta; ciclos defasados
   perigos: [
-    { x: 280, y: 215, r: 58, per: 480, off: 0,   stun: 240, cor: '#3a2a4a', cor2: '#8a5aaa' },
-    { x: 490, y: 215, r: 52, per: 480, off: 240, stun: 240, cor: '#3a2a4a', cor2: '#8a5aaa' },
-    { x: 650, y: 420, r: 58, per: 480, off: 120, stun: 240, cor: '#3a2a4a', cor2: '#8a5aaa' },
+    { rs: [[380, 250, 324, 56]], per: 480, off: 0,   stun: 210, cor: '#3a2a4a', cor2: '#8a5aaa' },
+    { rs: [[380, 350, 324, 56]], per: 480, off: 80,  stun: 210, cor: '#3a2a4a', cor2: '#8a5aaa' },
+    { rs: [[320, 155, 264, 44]], per: 480, off: 160, stun: 210, cor: '#3a2a4a', cor2: '#8a5aaa' },
+    { rs: [[320, 445, 264, 44]], per: 480, off: 240, stun: 210, cor: '#3a2a4a', cor2: '#8a5aaa' },
+    { x: 630, y: 200, r: 64, per: 480, off: 320, stun: 210, cor: '#3a2a4a', cor2: '#8a5aaa' },
+    { x: 630, y: 400, r: 64, per: 480, off: 400, stun: 210, cor: '#3a2a4a', cor2: '#8a5aaa' },
   ],
   ondas: ONDAS([
     [{ comum: 1, rapido: .2, xama: .03 }, { comum: .8, rapido: .3, bruto: .05, xama: .08 }],
@@ -55,51 +63,62 @@ const MAPAS = [{
     [{ comum: .5, rapido: .4, bruto: .25, xama: .18, blindado: .2 }, { comum: .35, rapido: .35, bruto: .35, xama: .25, blindado: .25 }],
   ]),
   rotas: [
-    [[-60, 130], [180, 130], [180, 330], [380, 330], [380, 130], [600, 130], [600, 300], [CFG.baseX, CFG.baseY]],
-    [[-60, 500], [300, 500], [300, 430], [500, 430], [500, 300], [CFG.baseX, CFG.baseY]],
+    [[-60, 110], [520, 110], [520, 200], [200, 200], [200, 300], [CFG.baseX, CFG.baseY]],
+    [[-60, 490], [520, 490], [520, 400], [200, 400], [200, 300], [CFG.baseX, CFG.baseY]],
     [[780, 660], [780, 430], [CFG.baseX, 430], [CFG.baseX, CFG.baseY]],
   ] },
-{ nome: 'Desfiladeiro', nivel: 4, larg: 56, desafio: 'Muralhas barram flechas · Morcegos de 2 lados',
+{ nome: 'Desfiladeiro', nivel: 4, larg: 46, base: [560, 300], desafio: 'Espiral · Muralhas · Neblina · Morcegos',
   tema: { g: ['#5a5a62', '#52525a', '#6a6a74'], p: ['#34343c', '#78787e', '#68686e'], ob: ['#2a2a30', '#4a4a54'] },
   dif: { qtd: 1.3, hp: 2.2, vel: 1.07 },
-  bloq: [[0, 520, 130, 80], [760, 520, 200, 80]],
-  muros: [[432, 200, 24, 110], [196, 300, 100, 24], [640, 210, 24, 100], [560, 450, 24, 50]],
+  bloq: [[40, 190, 80, 70], [0, 520, 130, 80]],
+  // muralhas altas dividem as duas faixas internas (barram flechas e virotes) e a neblina cobre os pontos de maior alcance
+  muros: [[480, 156, 24, 112], [660, 156, 24, 112], [350, 332, 24, 112], [560, 334, 24, 110]],
+  nevoas: [{ rs: [[340, 215, 150, 100]], f: 0.6 }, { rs: [[310, 385, 120, 110]], f: 0.6 }, { rs: [[700, 390, 130, 100]], f: 0.6 }],
   ondas: ONDAS([
     [{ comum: .9, rapido: .2, morcego: .15 }, { comum: .7, rapido: .3, bruto: .05, morcego: .3 }],
     [{ comum: .6, rapido: .4, bruto: .15, morcego: .35, blindado: .1 }, { comum: .45, rapido: .4, bruto: .25, morcego: .5, blindado: .2 }],
     [{ comum: .45, rapido: .4, bruto: .25, morcego: .5, xama: .1, blindado: .25 }, { comum: .3, rapido: .35, bruto: .35, morcego: .65, xama: .15, blindado: .3 }],
   ]),
   rotas: [
-    [[-60, 460], [140, 460], [140, 150], [340, 150], [340, 380], [560, 380], [560, 150], [760, 150], [760, 300], [CFG.baseX, CFG.baseY]],
-    [[420, 660], [420, 540], [700, 540], [700, 440], [840, 440], [840, CFG.baseY], [CFG.baseX, CFG.baseY]],
+    [[-60, 130], [800, 130], [800, 470], [220, 470], [220, 300], [560, 300]],
+    [[1020, 470], [220, 470], [220, 300], [560, 300]],
   ] },
-{ nome: 'Ruínas', nivel: 5, larg: 60, desafio: 'Três rotas cruzadas · Sapadores · Muralhas',
+{ nome: 'Ruínas', nivel: 5, larg: 48, desafio: 'Laço com cruzamento · Sapadores · Muralhas',
   tema: { g: ['#8a7a4a', '#827244', '#9a8a56'], p: ['#5a4a30', '#b8a070', '#a89060'], ob: ['#4a4030', '#7a6c50'] },
   dif: { qtd: 1.4, hp: 2.7, vel: 1.09 },
-  bloq: [[130, 300, 60, 60], [520, 390, 50, 50], [800, 150, 60, 60], [700, 400, 60, 60]],
-  muros: [[300, 200, 90, 22], [660, 340, 22, 60], [120, 200, 100, 22]],
-  nevoas: [{ x: 140, y: 380, r: 65, f: 0.65 }, { x: 700, y: 100, r: 70, f: 0.65 }],
+  bloq: [[820, 470, 70, 60], [100, 200, 60, 60]],
+  muros: [[468, 183, 24, 84], [468, 333, 24, 84], [800, 176, 24, 90], [800, 334, 24, 90]],
+  nevoas: [
+    { rs: [[567, 225, 140, 96]], f: 0.62 }, { rs: [[567, 375, 140, 96]], f: 0.62 },
+    { x: 750, y: 215, r: 62, f: 0.62 }, { x: 750, y: 385, r: 62, f: 0.62 }, { x: 150, y: 430, r: 65, f: 0.62 },
+  ],
   ondas: ONDAS([
     [{ comum: .9, rapido: .3, sapador: .05 }, { comum: .7, rapido: .4, bruto: .05, sapador: .12 }],
     [{ comum: .6, rapido: .4, bruto: .15, sapador: .18, blindado: .15 }, { comum: .45, rapido: .4, bruto: .25, sapador: .28, blindado: .25 }],
     [{ comum: .45, rapido: .4, bruto: .25, sapador: .3, blindado: .25, morcego: .2 }, { comum: .3, rapido: .35, bruto: .35, sapador: .4, blindado: .3, morcego: .3 }],
   ]),
   rotas: [
-    [[-60, 140], [260, 140], [260, 360], [480, 360], [480, 200], [720, 200], [720, 300], [CFG.baseX, CFG.baseY]],
-    [[-60, 480], [380, 480], [380, 260], [620, 260], [620, 300], [CFG.baseX, CFG.baseY]],
-    [[560, -60], [560, 300], [CFG.baseX, CFG.baseY]],
+    [[-60, 300], [300, 300], [300, 150], [660, 150], [660, 450], [300, 450], [300, 300], [CFG.baseX, CFG.baseY]],
+    [[300, 660], [300, 300], [CFG.baseX, CFG.baseY]],
+    [[660, -60], [660, 300], [CFG.baseX, CFG.baseY]],
   ] },
-{ nome: 'Covil do Rei', nivel: 6, larg: 56, desafio: 'Quatro entradas · Raios · Lava · Chefe',
+{ nome: 'Covil do Rei', nivel: 6, larg: 44, base: [480, 300], desafio: 'Cruzamento central · Raios · Lava · Chefe',
   tema: { g: ['#3a2030', '#341c2a', '#4a2a3c'], p: ['#1c0e16', '#6a3030', '#5a2828'], ob: ['#1a0c14', '#3a1c2a'] },
   dif: { qtd: 1.5, hp: 3.3, vel: 1.1 },
-  bloq: [[60, 230, 110, 170], [380, 520, 100, 50], [430, 420, 90, 50], [780, 540, 120, 50]],
-  muros: [[330, 200, 22, 70], [680, 176, 70, 22], [700, 340, 22, 90]],
-  nevoas: [{ x: 150, y: 560, r: 60, f: 0.6 }],
-  tempestade: { per: 360, stun: 300 },
+  bloq: [[40, 380, 90, 90], [830, 380, 90, 90]],
+  muros: [[330, 380, 22, 80], [610, 380, 22, 80], [210, 350, 22, 70], [730, 350, 22, 70]],
+  nevoas: [{ rs: [[490, 130, 224, 100]], f: 0.6 }, { rs: [[510, 490, 100, 110]], f: 0.6 }, { x: 150, y: 520, r: 65, f: 0.6 }, { x: 810, y: 520, r: 65, f: 0.6 }],
+  tempestade: { per: 300, stun: 300 },
+  // lava em oito pontos: junto ao castelo (blocos), nas faixas das serpentes, nos cantos (círculos) e nas bordas sul; ciclos defasados
   perigos: [
-    { x: 400, y: 225, r: 50, per: 420, off: 0,   stun: 240, cor: '#5a1810', cor2: '#e05020' },
-    { x: 740, y: 215, r: 52, per: 420, off: 140, stun: 240, cor: '#5a1810', cor2: '#e05020' },
-    { x: 760, y: 395, r: 52, per: 420, off: 280, stun: 240, cor: '#5a1810', cor2: '#e05020' },
+    { rs: [[370, 290, 110, 145]], per: 420, off: 0,   stun: 270, cor: '#5a1810', cor2: '#e05020' },
+    { rs: [[600, 310, 110, 145]], per: 420, off: 70,  stun: 270, cor: '#5a1810', cor2: '#e05020' },
+    { rs: [[300, 262, 176, 56]],  per: 420, off: 140, stun: 270, cor: '#5a1810', cor2: '#e05020' },
+    { rs: [[660, 262, 176, 56]],  per: 420, off: 210, stun: 270, cor: '#5a1810', cor2: '#e05020' },
+    { x: 230, y: 210, r: 78,      per: 420, off: 280, stun: 270, cor: '#5a1810', cor2: '#e05020' },
+    { x: 730, y: 210, r: 78,      per: 420, off: 350, stun: 270, cor: '#5a1810', cor2: '#e05020' },
+    { rs: [[300, 440, 200, 60]],  per: 420, off: 105, stun: 270, cor: '#5a1810', cor2: '#e05020' },
+    { rs: [[660, 440, 200, 60]],  per: 420, off: 245, stun: 270, cor: '#5a1810', cor2: '#e05020' },
   ],
   ondas: ONDAS([
     [{ comum: .8, rapido: .3, blindado: .1, xama: .05 }, { comum: .6, rapido: .4, bruto: .1, blindado: .2, xama: .1, morcego: .15 }],
@@ -107,10 +126,10 @@ const MAPAS = [{
     [{ comum: .4, rapido: .4, bruto: .3, blindado: .4, xama: .2, morcego: .4, sapador: .25 }, { comum: .3, rapido: .3, bruto: .4, blindado: .5, xama: .25, morcego: .5, sapador: .35 }],
   ], [0, 90, 100]),
   rotas: [
-    [[-60, 150], [220, 150], [220, 300], [CFG.baseX, CFG.baseY]],
-    [[-60, 470], [300, 470], [300, 380], [620, 380], [620, 300], [CFG.baseX, CFG.baseY]],
-    [[560, -60], [560, 130], [CFG.baseX, 130], [CFG.baseX, CFG.baseY]],
-    [[560, 660], [560, 480], [CFG.baseX, 480], [CFG.baseX, CFG.baseY]],
+    [[-60, 130], [360, 130], [360, 220], [140, 220], [140, 300], [480, 300]],
+    [[1020, 130], [600, 130], [600, 220], [820, 220], [820, 300], [480, 300]],
+    [[430, -60], [430, 190], [530, 190], [530, 250], [480, 250], [480, 300]],
+    [[430, 660], [430, 410], [530, 410], [530, 350], [480, 350], [480, 300]],
   ] },
 ];
 let MAPA = MAPAS[0];
@@ -132,6 +151,8 @@ const TOWERS = {
 // Cone de tiro (graus): cada torre tem um `cone` padrão; o jogador ajusta direção (mouse) e abertura (roda) ao posicionar.
 // passos = tiros por varredura (de uma ponta do cone à outra, indo e voltando).
 const CONE_CFG = { passos: 7, min: 20, max: 140, passo: 10 };
+// Zona morta (px): raio em volta da torre onde ela não acerta nem mira inimigos (tiros ignoram quem está dentro dela). 0 = sem zona morta.
+const ZM = { arqueiro: 26, canhao: 48, gelo: 0, balista: 40, tesla: 24, chamas: 0, veneno: 38, totem: 0 };
 
 const GOBLINS = {
   // fixo: ignora o multiplicador de vida das ondas (morre com 1 tiro) · enxame: quantas cópias nascem por goblin sorteado

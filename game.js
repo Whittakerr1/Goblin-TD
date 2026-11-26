@@ -6,6 +6,26 @@ const rad = d => d * Math.PI / 180;
 const angD = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
 const rnd = (a, b) => a + Math.random() * (b - a);
 const BASE = [CFG.baseX, CFG.baseY];
+// castelo por mapa: CFG.baseX/baseY e BASE seguem MAPA.base (padrão 900,300); chamado ao redesenhar o fundo, isto é, a cada troca de mapa
+const aplicaBase = () => { const b = MAPA.base || [900, 300]; CFG.baseX = BASE[0] = b[0]; CFG.baseY = BASE[1] = b[1]; };
+// zona de perigo/neblina: círculo (x, y, r) ou união de retângulos rs = [[centroX, centroY, larg, alt], ...] (permite L, cruz, faixas, anéis...)
+const dentroF = (z, x, y) => z.rs ? z.rs.some(r => Math.abs(x - r[0]) < r[2] / 2 && Math.abs(y - r[1]) < r[3] / 2) : Math.hypot(x - z.x, y - z.y) < z.r;
+// depois de preparada, a zona vira uma máscara de células 4x4 sem o caminho (z.m); antes disso vale a forma bruta
+const dentro = (z, x, y) => z.m ? z.m.has((x >> 2) * 256 + (y >> 2)) : dentroF(z, x, y);
+const caixaZ = z => z.rs ? [Math.min(...z.rs.map(r => r[0] - r[2] / 2)), Math.min(...z.rs.map(r => r[1] - r[3] / 2)), Math.max(...z.rs.map(r => r[0] + r[2] / 2)), Math.max(...z.rs.map(r => r[1] + r[3] / 2))] : [z.x - z.r, z.y - z.r, z.x + z.r, z.y + z.r];
+// máscara da zona (a forma menos o caminho dos monstros, com folga de 3px), borda pontilhada (grade de 4px) e centro; calculados uma vez por troca de mapa
+function preparaZona(z) {
+  const [x0, y0, x1, y1] = caixaZ(z), lim = MAPA.larg / 2 + 3, m = new Set(); z.m = null; z.borda = [];
+  if (z.rs) { z.x = (x0 + x1) / 2; z.y = (y0 + y1) / 2; }
+  for (let y = Math.floor(y0 / 4) * 4; y <= y1; y += 4) for (let x = Math.floor(x0 / 4) * 4; x <= x1; x += 4) if (dentroF(z, x + 2, y + 2) && nearPath(x + 2, y + 2).d > lim) m.add((x >> 2) * 256 + (y >> 2));
+  z.m = m;
+  for (let y = Math.floor(y0 / 4) * 4; y <= y1; y += 4) for (let x = Math.floor(x0 / 4) * 4; x <= x1; x += 4) if (dentro(z, x, y) && !(dentro(z, x + 4, y) && dentro(z, x - 4, y) && dentro(z, x, y + 4) && dentro(z, x, y - 4))) z.borda.push([x, y]);
+}
+// erupção: faíscas subindo em pontos aleatórios dentro da zona
+function zonaFx(h) {
+  const [x0, y0, x1, y1] = caixaZ(h);
+  for (let i = 0, n = 0; i < 90 && n < 40; i++) { const x = rnd(x0, x1), y = rnd(y0, y1); if (dentro(h, x, y)) { n++; S.part.push({ x, y, vx: 0, vy: rnd(-1.4, -0.3), life: 14, max: 14, c1: '#ffffff', c2: h.cor2 }); } }
+}
 // ponto mais próximo do caminho (para limitar a multidão e bloquear torres)
 function nearPath(x, y) {
   let best = { d: 1e9, x: 0, y: 0 };
@@ -62,17 +82,35 @@ const pk = id => META.lv[id] || 0, ef = id => pk(id) * PERKS[id].u;
 const livre = k => k === 'arqueiro' || pk(k) > 0;
 // limite de unidades individual por torre: 1 base + perk de Unidade da própria árvore
 const vagas = k => 1 + pk(PRE[k] + '_slot'), usadas = k => S.tow.filter(t => t.k === k).length, cheio = k => usadas(k) >= vagas(k);
+const zm = t => ZM[t.k] || 0; // zona morta da torre (data.js)
 
 // fundo estático do mapa atual (tema, poças de perigo, caminho(s) e obstáculos); redesenhado a cada troca de mapa
 const bg = document.createElement('canvas'); bg.width = CFG.W; bg.height = CFG.H;
+// carrega o tileset de grama do mapa (cache); ao terminar de carregar, redesenha o fundo. Retorna null enquanto não estiver pronto (usa o fundo procedural)
+const TILES = {};
+function tileImg(src) {
+  if (!TILES[src]) { const im = new Image(); im.onload = () => { if (MAPA.grama === src) { drawBg(); drawBgExtra(); } }; im.src = src; TILES[src] = im; }
+  const im = TILES[src]; return im.complete && im.naturalWidth ? im : null;
+}
+// grama em tiles de 32px: linha 0 do sheet = lisa/variações (maioria), linha 1 = decorações (1 em 6), escolha fixa por posição
+function drawGrama(b, im) {
+  b.imageSmoothingEnabled = false;
+  for (let y = 0; y < CFG.H; y += 32) for (let x = 0; x < CFG.W; x += 32) {
+    const h = (((x / 32) * 73856093) ^ ((y / 32) * 19349663)) >>> 0, v = h % 20;
+    const col = v < 5 ? 0 : v < 10 ? 1 : v < 13 ? 2 : v < 15 ? 3 : v < 16 ? 4 : v < 17 ? 7 : v < 18 ? 5 : 6;
+    const deco = (h >> 8) % 6 === 0;
+    b.drawImage(im, (deco ? (h >> 12) % 8 : col) * 32, deco ? 32 : 0, 32, 32, x, y, 32, 32);
+  }
+}
 function drawBg() {
-  const b = bg.getContext('2d'), T = MAPA.tema || TEMA0;
+  aplicaBase(); const b = bg.getContext('2d'), T = MAPA.tema || TEMA0, gi = MAPA.grama && tileImg(MAPA.grama);
+  if (gi) drawGrama(b, gi); else
   for (let y = 0; y < CFG.H; y += 16) for (let x = 0; x < CFG.W; x += 16) {
     b.fillStyle = ((x + y) / 16) % 2 ? T.g[0] : T.g[1]; b.fillRect(x, y, 16, 16);
     if ((x * 7 + y * 13) % 11 === 0) { b.fillStyle = T.g[2]; b.fillRect(x + 4, y + 6, 2, 2); }
   }
   // poças dos gêiseres/lava (fixas; o aviso piscando é desenhado em draw)
-  for (const z of MAPA.perigos) for (let y = -z.r; y <= z.r; y += 2) for (let x = -z.r; x <= z.r; x += 2) if (x * x + y * y <= z.r * z.r) { b.fillStyle = (x * 3 + y * 5) % 11 === 0 ? z.cor2 : z.cor; b.fillRect(q(z.x + x), q(z.y + y), 2, 2); }
+  for (const z of MAPA.perigos) { preparaZona(z); const [x0, y0, x1, y1] = caixaZ(z); for (let y = q(y0); y <= y1; y += 2) for (let x = q(x0); x <= x1; x += 2) if (dentro(z, x, y)) { b.fillStyle = (x * 3 + y * 5) % 11 === 0 ? z.cor2 : z.cor; b.fillRect(x, y, 2, 2); } }
   // caminho(s) de terra: borda escura, miolo claro, pedrinhas
   const h = MAPA.larg / 2, segs = [];
   for (const P of MAPA.rotas) for (let i = 0; i < P.length - 1; i++) {
@@ -94,10 +132,9 @@ function drawBg() {
 function drawBgExtra() {
   const b = bg.getContext('2d');
   for (const z of MAPA.nevoas) {
-    b.fillStyle = '#aab4b8';
-    for (let j = -z.r; j <= z.r; j += 4) for (let i = -z.r; i <= z.r; i += 4) if (i * i + j * j <= z.r * z.r && ((i + j) / 4) % 3 === 0) b.fillRect(q(z.x + i), q(z.y + j), 2, 2);
-    b.fillStyle = '#ffffff';
-    for (let a = 0; a < 6.28; a += 7 / z.r) b.fillRect(q(z.x + Math.cos(a) * z.r), q(z.y + Math.sin(a) * z.r), 2, 2);
+    preparaZona(z); const [x0, y0, x1, y1] = caixaZ(z); b.fillStyle = '#aab4b8';
+    for (let y = Math.floor(y0 / 4) * 4; y <= y1; y += 4) for (let x = Math.floor(x0 / 4) * 4; x <= x1; x += 4) if (dentro(z, x, y) && ((x + y) / 4) % 3 === 0) b.fillRect(x, y, 2, 2);
+    b.fillStyle = '#ffffff'; for (const [x, y] of z.borda) b.fillRect(x, y, 2, 2);
   }
   for (const [mx, my, mw, mh] of MAPA.muros) {
     b.fillStyle = '#34343c'; b.fillRect(q(mx) - 2, q(my) - 2, q(mw) + 4, q(mh) + 4);
@@ -201,7 +238,7 @@ function hit(g, dmg, pura, src) { if (g.d.armor && !pura) dmg = Math.max(1, dmg 
 // ---------- torres ----------
 // Totem: aura que soma dano/cadência às torres dentro do raio (acumula entre Totens; Totem atordoado não funciona)
 // neblina local: torres dentro de uma zona têm o alcance multiplicado por f
-const nevoaF = (x, y) => { let f = 1; for (const z of MAPA.nevoas) if (Math.hypot(x - z.x, y - z.y) < z.r) f = Math.min(f, z.f); return f; };
+const nevoaF = (x, y) => { let f = 1; for (const z of MAPA.nevoas) if (dentro(z, x, y)) f = Math.min(f, z.f); return f; };
 const auraR = o => o.def.alcance * (1 + ef('tot_alc')) * (MAPA.mod.alc || 1) * nevoaF(o.x, o.y) * (o.evo ? 1 + EVOL.buff.alc : 1);
 function bonus(t) {
   let d = 0, c = 0;
@@ -227,7 +264,7 @@ function lineFx(x0, y0, x1, y1) {
 }
 function raio(t, st, ex) {
   const def = t.def; let g = null;
-  for (const o of S.gob) { if (o.dead) continue; const dx = o.x - t.x, dy = o.y - t.y; if (dx * dx + dy * dy <= st.alc * st.alc && angD(Math.atan2(dy, dx), t.dir) <= t.cone / 2 + 0.1 && (!g || o.prog > g.prog) && !(ex && ex.has(o))) g = o; }
+  for (const o of S.gob) { if (o.dead) continue; const dx = o.x - t.x, dy = o.y - t.y; if (dx * dx + dy * dy <= st.alc * st.alc && dx * dx + dy * dy >= zm(t) ** 2 && angD(Math.atan2(dy, dx), t.dir) <= t.cone / 2 + 0.1 && (!g || o.prog > g.prog) && !(ex && ex.has(o))) g = o; }
   if (!g) return;
   const vis = new Set(ex); let px = t.x, py = t.y;
   for (let i = 0; g && i <= def.cadeia + pk('tes_salto'); i++) {
@@ -240,8 +277,8 @@ function raio(t, st, ex) {
 }
 // Torres não miram: varrem o cone (ponta a ponta, ida e volta) e atiram em linha reta; só disparam se houver goblin dentro do cone
 function fire(t) {
-  const st = tStat(t), def = t.def, N = CONE_CFG.passos;
-  if (!S.gob.some(g => { if (g.dead) return false; const dx = g.x - t.x, dy = g.y - t.y; return dx * dx + dy * dy <= st.alc * st.alc && angD(Math.atan2(dy, dx), t.dir) <= t.cone / 2 + 0.1; })) return;
+  const st = tStat(t), def = t.def, N = CONE_CFG.passos, Z = zm(t) ** 2;
+  if (!S.gob.some(g => { if (g.dead) return false; const dx = g.x - t.x, dy = g.y - t.y; return dx * dx + dy * dy <= st.alc * st.alc && dx * dx + dy * dy >= Z && angD(Math.atan2(dy, dx), t.dir) <= t.cone / 2 + 0.1; })) return;
   t.cd = def.cd * (1 - ef(PRE[t.k] + '_cad')) / (1 + bonus(t).c) * (t.evo ? 1 - EVOL.buff.cad : 1);
   const a = t.dir - t.cone / 2 + t.sw * t.cone, step = 1 / (N - 1);
   let nx = t.sw + t.sd * step; if (nx > 1.0001 || nx < -0.0001) { t.sd = -t.sd; nx = t.sw + t.sd * step; } t.sw = nx;
@@ -249,7 +286,7 @@ function fire(t) {
     const hw = t.cone / N;
     for (const g of S.gob) {
       const dx = g.x - t.x, dy = g.y - t.y;
-      if (!g.dead && dx * dx + dy * dy <= st.alc * st.alc && angD(Math.atan2(dy, dx), a) <= hw) { if (def.tipo === 'fogo') { g.burn = Math.round(def.queima * (1 + ef('cha_brasa'))); g.bd = st.dano * def.queimaD; g.burnSrc = t; g.sp = t.evo ? 3 : 0; } else { g.slow = def.slowT * (1 + ef('gel_dur')); g.slowSrc = t; if (t.evo && !g.d.boss) g.frz = 60; } hit(g, st.dano, false, t); }
+      if (!g.dead && dx * dx + dy * dy <= st.alc * st.alc && dx * dx + dy * dy >= Z && angD(Math.atan2(dy, dx), a) <= hw) { if (def.tipo === 'fogo') { g.burn = Math.round(def.queima * (1 + ef('cha_brasa'))); g.bd = st.dano * def.queimaD; g.burnSrc = t; g.sp = t.evo ? 3 : 0; } else { g.slow = def.slowT * (1 + ef('gel_dur')); g.slowSrc = t; if (t.evo && !g.d.boss) g.frz = 60; } hit(g, st.dano, false, t); }
     }
     arcFx(t.x, t.y, st.alc * 0.5, a - hw, a + hw, '#ffffff', def.cor2); arcFx(t.x, t.y, st.alc, a - hw, a + hw, def.cor, def.cor2);
   } else if (def.tipo === 'flecha') {
@@ -268,7 +305,7 @@ function updateTowers() {
     let tg = null, mt = null; const ci = ((p.x / CELL) | 0) + 1 + ((p.y / CELL) | 0) * COLS;
     hitSearch: for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
       const c = GRID && GRID[ci + ox + oy * COLS]; if (!c) continue;
-      for (const g of c) { const dx = g.x - p.x, dy = g.y - p.y, rr = g.r + 6; if (!g.dead && !(p.vis && p.vis.has(g)) && dx * dx + dy * dy < rr * rr) { tg = g; if (!p.def.multi) break hitSearch; (mt = mt || []).push(g); } }
+      for (const g of c) { const dx = g.x - p.x, dy = g.y - p.y, rr = g.r + 6; if (!g.dead && !(p.vis && p.vis.has(g)) && dx * dx + dy * dy < rr * rr && Math.hypot(p.x - p.src.x, p.y - p.src.y) >= zm(p.src)) { tg = g; if (!p.def.multi) break hitSearch; (mt = mt || []).push(g); } }
     }
     if (mt) { p.vis = p.vis || new Set(); for (const g of mt) { hit(g, p.dano * (1 + Math.min(1, ef('bal_pen') * p.vis.size)), !!p.src.evo, p.src); p.vis.add(g); } } // balista: atravessa todos na linha; Impacto soma dano por inimigo já atravessado
     else if (tg && p.furo > 0) { hit(tg, p.dano, false, p.src); p.furo--; (p.vis = p.vis || new Set()).add(tg); } // perfuração: atravessa e segue
@@ -347,8 +384,8 @@ function updateExtras() {
     if (al.length) { const t = al[(Math.random() * al.length) | 0]; stunar(t, TP.stun); lineFx(t.x, t.y - 80, t.x, t.y); ringFx(t.x, t.y, 16, '#ffffff', '#a08010'); burst(t.x, t.y, 12, '#ffffff', '#ffe84c', 2.5); }
   }
   if (S.ativa) for (const h of MAPA.perigos) if (S.run > 0 && (S.run + h.off) % h.per === 0) {
-    for (const t of S.tow) if (Math.hypot(t.x - h.x, t.y - h.y) < h.r) stunar(t, h.stun);
-    ringFx(h.x, h.y, h.r * 0.5, '#ffffff', h.cor2); ringFx(h.x, h.y, h.r, '#ffffff', h.cor2); burst(h.x, h.y, 16, '#ffffff', h.cor2, 3);
+    for (const t of S.tow) if (dentro(h, t.x, t.y)) stunar(t, h.stun);
+    zonaFx(h);
   }
 }
 function pagar() {
@@ -383,7 +420,7 @@ function drawAim() {
   if (Math.hypot(dx, dy) > 6) A.dir = Math.atan2(dy, dx);
   const alc = A.edit ? tStat(A.edit).alc : A.def.alcance * (1 + ef(PRE[A.k] + '_alc')) * (MAPA.mod.alc || 1) * nevoaF(A.x, A.y);
   if (!A.edit) box(A.x, A.y, 10, A.def.cor);
-  coneFx(A.x, A.y, alc, A.dir, A.cone, '#ffffff');
+  coneFx(A.x, A.y, alc, A.dir, A.cone, '#ffffff'); if (ZM[A.k]) ring(A.x, A.y, ZM[A.k], '#ff4040');
 }
 function txt(s, x, y, c, al) { ctx.textAlign = al || 'left'; ctx.fillStyle = '#10161e'; for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) ctx.fillText(s, x + dx, y + dy); ctx.fillStyle = c; ctx.fillText(s, x, y); ctx.textAlign = 'left'; }
 function drawHud() {
@@ -419,7 +456,7 @@ function draw() {
   ctx.drawImage(bg, 0, 0);
   const bx = CFG.baseX, by = CFG.baseY;
   box(bx, by, 64, '#4a4a55'); box(bx, by, 52, '#8a8a95'); box(bx, by, 28, '#5a4630'); box(bx, by - 40, 6, '#ff4040');
-  for (const h of MAPA.perigos) { const warn = S.ativa && h.per - (S.run + h.off) % h.per <= 90 && S.t % 10 < 5; ring(h.x, h.y, h.r, warn ? '#ff4040' : h.cor2); }
+  for (const h of MAPA.perigos) { const warn = S.ativa && h.per - (S.run + h.off) % h.per <= 90 && S.t % 10 < 5; ctx.fillStyle = warn ? '#ff4040' : h.cor2; for (const [x, y] of h.borda) ctx.fillRect(x, y, 2, 2); }
   for (const z of S.zon) { if (z.life > 60 || z.life % 8 < 5) ring(z.x, z.y, z.r, '#6ae04c'); ring(z.x, z.y, z.r * 0.55, '#2a8a28'); }
   for (const t of S.tow) {
     const st = t.stun > 0;
@@ -443,7 +480,7 @@ function draw() {
   // fantasma da torre / alcance
   const over = S.tow.find(t => Math.hypot(t.x - S.mx, t.y - S.my) < 12);
   if (S.aim) drawAim();
-  else if (over && over.def.tipo !== 'aura') coneFx(over.x, over.y, tStat(over).alc, over.dir, over.cone, '#ffffff');
+  else if (over && over.def.tipo !== 'aura') { coneFx(over.x, over.y, tStat(over).alc, over.dir, over.cone, '#ffffff'); if (zm(over)) ring(over.x, over.y, zm(over), '#ff4040'); }
   else { const d = TOWERS[S.sel]; ring(S.mx, S.my, d.alcance * (1 + ef(PRE[S.sel] + '_alc')) * (MAPA.mod.alc || 1) * nevoaF(S.mx, S.my), canPlace(S.mx, S.my) && !cheio(S.sel) ? '#ffffff' : '#ff4040'); box(S.mx, S.my, 10, d.cor); }
   if (over && !S.aim && pk(PRE[over.k] + '_evo') > 0) { ctx.font = 'bold 11px monospace'; txt(over.evo ? 'EVOLUÍDA' : `Evolução ${over.kills || 0}/${S.need[over.k]}`, over.x, over.y - 22, over.evo ? '#ffd84c' : '#ffffff', 'center'); }
   // HUD
