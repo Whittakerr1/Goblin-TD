@@ -233,7 +233,17 @@ function evoBar(t) {
   if (t.evo || !(pk(PRE[t.k] + '_evo') > 0)) return;
   ctx.fillStyle = '#10161e'; ctx.fillRect(q(t.x - 8), q(t.y + 15), 16, 2); ctx.fillStyle = '#ffd84c'; ctx.fillRect(q(t.x - 8), q(t.y + 15), q(16 * Math.min(1, (t.kills || 0) / S.need[t.k])), 2);
 }
-function hit(g, dmg, pura, src) { if (g.d.armor && !pura) dmg = Math.max(1, dmg - g.d.armor); g.hp -= dmg; g.flash = 3; if (g.hp <= 0 && !g.dead) { g.dead = true; S.kills++; burst(g.x, g.y, g.d.enxame ? 2 : 6, g.d.cor, g.d.cor2); if (src) credito(src, g); } }
+// abate de goblin em 3 estágios: 1) flash branco em cruz + anel quadrado, 2) estilhaços que tremem a cada 3 quadros (p.jit), 3) dissipação sólida (2px + tom escuro, feita no draw)
+function killFx(g) {
+  if (S.part.length > 700) return;
+  const x = g.x, y = g.y, d = g.d, P = (px, py, vx, vy, life, c1, c2, jit) => S.part.push({ x: px, y: py, vx, vy, life, max: life, c1, c2, jit });
+  if (d.enxame) { P(x, y, 0, 0, 6, '#ffffff', d.cor2); burst(x, y, 2, d.cor, d.cor2); return; }
+  const n = d.boss ? 2 : 1, D8 = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
+  for (const [ox, oy] of [[0, 0], [4, 0], [-4, 0], [0, 4], [0, -4]]) P(x + ox * n, y + oy * n, 0, 0, 6, '#ffffff', '#ffffff');
+  for (const [dx, dy] of D8) { const k = dx && dy ? 0.8 : 1.1; P(x + dx * 4, y + dy * 4, dx * k * n, dy * k * n, 12, '#ffffff', d.cor2); if (d.boss) P(x + dx * 8, y + dy * 8, dx * k * 2, dy * k * 2, 16, d.cor, d.cor2); }
+  for (let i = 0; i < 6 * n; i++) { const a = rnd(0, 6.28), v = rnd(0.6, 1.8) * n; P(x, y, Math.cos(a) * v, Math.sin(a) * v, 22, i % 2 ? d.cor : '#ffd84c', d.cor2, true); }
+}
+function hit(g, dmg, pura, src) { if (g.d.armor && !pura) dmg = Math.max(1, dmg - g.d.armor); g.hp -= dmg; g.flash = 3; if (g.hp <= 0 && !g.dead) { g.dead = true; S.kills++; killFx(g); if (src) credito(src, g); } }
 
 // ---------- torres ----------
 // Totem: aura que soma dano/cadência às torres dentro do raio (acumula entre Totens; Totem atordoado não funciona)
@@ -399,7 +409,7 @@ function update() {
   for (const gr of S.groups) { gr.delay--; if (gr.delay <= 0) { spawnGroup(gr); gr.done = true; } }
   S.groups = S.groups.filter(g => !g.done);
   updateGoblins(); updateTowers(); updateExtras();
-  for (const p of S.part) { p.x += p.vx; p.y += p.vy; p.life--; }
+  for (const p of S.part) { p.x += p.vx; p.y += p.vy; p.life--; if (p.jit) { p.vx *= 0.92; p.vy *= 0.92; if (p.life % 3 === 0) { p.x += rnd(-2, 2); p.y += rnd(-2, 2); } } }
   S.part = S.part.filter(p => p.life > 0);
   if (S.ativa) { S.run++; if (S.run >= RUN_FRAMES) { S.ativa = false; S.won = true; S.over = true; } }
   if (S.over && !S.pago) pagar();
