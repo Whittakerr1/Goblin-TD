@@ -15,7 +15,7 @@ const ONDAS = (mix, chefe = []) => [
 //   rotas (várias entradas, cada uma começa fora da tela) · base [x,y] (posição do castelo; padrão CFG.baseX/baseY; último ponto de toda rota = castelo) · bloq [x,y,w,h] (sem torres) · muros [x,y,w,h] (sem torres e barram flechas/virotes) · nevoas {x,y,r,f} (alcance ×f nas torres dentro) ·
 //   perigos (gêiseres/lava que atordoam torres dentro da zona) · nevoas (alcance ×f) · ambos aceitam círculo {x,y,r} ou formas {rs:[[cx,cy,w,h],...]} (união de retângulos) · tempestade {per,stun} (raio atordoa torre aleatória) · dif (escala própria) · tema · desafio (texto do HUD)
 const MAPAS = [{
-  nome: 'Campina', nivel: 1, larg: 60, grama: 'assets/tilesets/tileset_grama_campina.png', desafio: 'Serpente em S · aprenda o básico',
+  nome: 'Campina', nivel: 1, larg: 60, grama: 'assets/tilesets/tileset_grama_campina.png', caminho: 'assets/tilesets/tileset_caminho_campina.png', desafio: 'Serpente em S · aprenda o básico',
   // Run de 6 min = 3 ondas de 2 min (dur em segundos), sem intervalo entre elas.
   // Grupos nascem a cada gap quadros (gapIni→gapFim) com tam goblins (tamIni→tamFim); a mistura vai de peso0 a peso1;
   // hp / vel = [início, fim] da onda (multiplicadores).
@@ -27,7 +27,7 @@ const MAPAS = [{
   bloq: [[90, 240, 80, 60], [720, 350, 90, 60]],
   pontos: [[-60, 150], [600, 150], [600, 300], [280, 300], [280, 450], [CFG.baseX, 450], [CFG.baseX, CFG.baseY]],
 },
-{ nome: 'Floresta', nivel: 2, larg: 44, grama: 'assets/tilesets/tileset_grama_floresta.png', desafio: 'Pente · Duas entradas · Neblina',
+{ nome: 'Floresta', nivel: 2, larg: 44, grama: 'assets/tilesets/tileset_grama_floresta.png', caminho: 'assets/tilesets/tileset_caminho_floresta.png', desafio: 'Pente · Duas entradas · Neblina',
   tema: { g: ['#24502a', '#204824', '#2e6030'], p: ['#4a3a28', '#7a6040', '#6a5238'], ob: ['#102a10', '#1e4a1e'] },
   dif: { qtd: 1.1, hp: 1.4, vel: 1.03 },
   nevoas: [
@@ -44,7 +44,7 @@ const MAPAS = [{
     [[-60, 300], [150, 300], [150, 180], [300, 180], [300, 420], [450, 420], [450, 180], [600, 180], [600, 420], [760, 420], [760, 300], [CFG.baseX, CFG.baseY]],
     [[700, 660], [700, 550], [850, 550], [850, 300], [CFG.baseX, CFG.baseY]],
   ] },
-{ nome: 'Pântano', nivel: 3, larg: 48, grama: 'assets/tilesets/tileset_grama_pantano.png', desafio: 'Serpentes + atalho · Gêiseres · Xamãs curam',
+{ nome: 'Pântano', nivel: 3, larg: 48, grama: 'assets/tilesets/tileset_grama_pantano.png', caminho: 'assets/tilesets/tileset_caminho_pantano.png', desafio: 'Serpentes + atalho · Gêiseres · Xamãs curam',
   tema: { g: ['#3a5a2c', '#34502a', '#4a6a34'], p: ['#3a2e20', '#6a5a3a', '#5a4a30'], ob: ['#1a2a18', '#2e4a28'] },
   dif: { qtd: 1.2, hp: 1.8, vel: 1.05 },
   bloq: [[760, 330, 80, 50]],
@@ -134,6 +134,9 @@ const MAPAS = [{
 ];
 let MAPA = MAPAS[0];
 MAPAS.forEach(m => { m.rotas = m.rotas || [m.pontos]; m.bloq = m.bloq || []; m.muros = m.muros || []; m.nevoas = m.nevoas || []; m.perigos = m.perigos || []; m.mod = m.mod || {}; });
+// arquivos de cenário por mapa (gerados por tools/gerar_tileset_mapas.py e os dois geradores de grama/caminho); se faltar um PNG, o jogo usa o desenho procedural
+const SLUGS = ['campina', 'floresta', 'pantano', 'desfiladeiro', 'ruinas', 'covil'], TS = 'assets/tilesets/tileset_';
+MAPAS.forEach((m, i) => { const s = SLUGS[i]; m.grama = m.grama || TS + 'grama_' + s + '.png'; m.caminho = m.caminho || TS + 'caminho_' + s + '.png'; m.obst = TS + 'obstaculo_' + s + '.png'; m.castelo = 'assets/sprites/cenario/castelo_' + s + '.png'; if (m.muros.length) m.muro = TS + 'muro_' + s + '.png'; if (m.perigos.length) m.perigo = TS + 'perigo_' + s + '.png'; });
 
 const TOWERS = {
   arqueiro: { nome: 'Arqueiro', custo: 50,  dano: 7,  cd: 28, alcance: 130, tipo: 'flecha', vel: 7, cor: '#c8903c', cor2: '#7a5420', cone: 70 },
@@ -166,6 +169,9 @@ const GOBLINS = {
   sapador:  { hp: 14, vel: 0.9, r: 4, dano: 1, sabota: true, sab: 30, cor: '#f0a830', cor2: '#8a5a10' },
   chefe:    { hp: 400, vel: 0.3, r: 14, dano: 10, boss: true, invoca: 240, cor: '#d03838', cor2: '#701818' },
 };
+
+// Sprites dos goblins (tools/gerar_sprites_goblins.py → assets/sprites/goblins/goblin_<tipo>_sheet.png): [largura, altura] de cada quadro; a sheet tem 2 quadros lado a lado
+const SPR_GOB = { comum: [10, 10], rapido: [11, 10], bruto: [26, 24], blindado: [18, 17], xama: [18, 19], sapador: [14, 14], morcego: [14, 12], chefe: [44, 42] };
 
 const runFrames = m => m.ondas.reduce((n, o) => n + o.dur * 60, 0);
 let RUN_FRAMES = runFrames(MAPA);

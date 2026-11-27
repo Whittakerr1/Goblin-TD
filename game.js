@@ -83,13 +83,15 @@ const livre = k => k === 'arqueiro' || pk(k) > 0;
 // limite de unidades individual por torre: 1 base + perk de Unidade da própria árvore
 const vagas = k => 1 + pk(PRE[k] + '_slot'), usadas = k => S.tow.filter(t => t.k === k).length, cheio = k => usadas(k) >= vagas(k);
 const zm = t => ZM[t.k] || 0; // zona morta da torre (data.js)
+// o alvo (pelo centro) está fora da zona morta da torre `t`? vale para tiros, explosões, saltos do Tesla e poças
+const foraZ = (t, x, y) => (x - t.x) ** 2 + (y - t.y) ** 2 >= zm(t) ** 2;
 
 // fundo estático do mapa atual (tema, poças de perigo, caminho(s) e obstáculos); redesenhado a cada troca de mapa
 const bg = document.createElement('canvas'); bg.width = CFG.W; bg.height = CFG.H;
 // carrega o tileset de grama do mapa (cache); ao terminar de carregar, redesenha o fundo. Retorna null enquanto não estiver pronto (usa o fundo procedural)
 const TILES = {};
 function tileImg(src) {
-  if (!TILES[src]) { const im = new Image(); im.onload = () => { if (MAPA.grama === src) { drawBg(); drawBgExtra(); } }; im.src = src; TILES[src] = im; }
+  if (!TILES[src]) { const im = new Image(); im.onload = () => { if ([MAPA.grama, MAPA.caminho, MAPA.obst, MAPA.muro, MAPA.perigo].includes(src)) { drawBg(); drawBgExtra(); } }; im.src = src; TILES[src] = im; }
   const im = TILES[src]; return im.complete && im.naturalWidth ? im : null;
 }
 // grama em tiles de 32px: linha 0 do sheet = lisa/variações (maioria), linha 1 = decorações (1 em 6), escolha fixa por posição
@@ -102,6 +104,17 @@ function drawGrama(b, im) {
     b.drawImage(im, (deco ? (h >> 12) % 8 : col) * 32, deco ? 32 : 0, 32, 32, x, y, 32, 32);
   }
 }
+// caminho em tiles de 32px, recortado pelos retângulos do caminho (clip): linha 0 = terra (variações), linha 1 = decorações (1 em 4, deslocadas em passos de 2px)
+function drawCaminho(b, im, segs) {
+  b.save(); b.imageSmoothingEnabled = false; b.beginPath(); segs.forEach(s => b.rect(s[0], s[1], s[2], s[3])); b.clip();
+  for (let y = 0; y < CFG.H; y += 32) for (let x = 0; x < CFG.W; x += 32) {
+    if (!segs.some(s => x < s[0] + s[2] && x + 32 > s[0] && y < s[1] + s[3] && y + 32 > s[1])) continue;
+    const h = (((x / 32) * 83492791) ^ ((y / 32) * 2654435761)) >>> 0, v = h % 16;
+    b.drawImage(im, (v < 5 ? 0 : v < 9 ? 1 : v < 11 ? 2 : v < 12 ? 3 : v < 13 ? 4 : v < 14 ? 5 : v < 15 ? 6 : 7) * 32, 0, 32, 32, x, y, 32, 32);
+    if ((h >>> 8) % 4 === 0) b.drawImage(im, ((h >>> 12) % 8) * 32, 32, 32, 32, x + ((h >>> 16) % 5 - 2) * 2, y + ((h >>> 20) % 5 - 2) * 2, 32, 32);
+  }
+  b.restore();
+}
 function drawBg() {
   aplicaBase(); const b = bg.getContext('2d'), T = MAPA.tema || TEMA0, gi = MAPA.grama && tileImg(MAPA.grama);
   if (gi) drawGrama(b, gi); else
@@ -110,7 +123,10 @@ function drawBg() {
     if ((x * 7 + y * 13) % 11 === 0) { b.fillStyle = T.g[2]; b.fillRect(x + 4, y + 6, 2, 2); }
   }
   // poças dos gêiseres/lava (fixas; o aviso piscando é desenhado em draw)
-  for (const z of MAPA.perigos) { preparaZona(z); const [x0, y0, x1, y1] = caixaZ(z); for (let y = q(y0); y <= y1; y += 2) for (let x = q(x0); x <= x1; x += 2) if (dentro(z, x, y)) { b.fillStyle = (x * 3 + y * 5) % 11 === 0 ? z.cor2 : z.cor; b.fillRect(x, y, 2, 2); } }
+  const pi = MAPA.perigo && tileImg(MAPA.perigo);
+  for (const z of MAPA.perigos) { preparaZona(z); const [x0, y0, x1, y1] = caixaZ(z);
+    if (pi) { for (let y = Math.floor(y0 / 4) * 4; y <= y1; y += 4) for (let x = Math.floor(x0 / 4) * 4; x <= x1; x += 4) if (dentro(z, x, y)) b.drawImage(pi, (((x >> 5) * 5 + (y >> 5) * 3) & 3) * 32 + (x & 31), y & 31, 4, 4, x, y, 4, 4); continue; }
+    for (let y = q(y0); y <= y1; y += 2) for (let x = q(x0); x <= x1; x += 2) if (dentro(z, x, y)) { b.fillStyle = (x * 3 + y * 5) % 11 === 0 ? z.cor2 : z.cor; b.fillRect(x, y, 2, 2); } }
   // caminho(s) de terra: borda escura, miolo claro, pedrinhas
   const h = MAPA.larg / 2, segs = [];
   for (const P of MAPA.rotas) for (let i = 0; i < P.length - 1; i++) {
@@ -118,11 +134,17 @@ function drawBg() {
     segs.push([q(Math.min(a[0], c[0]) - h), q(Math.min(a[1], c[1]) - h), q(Math.abs(c[0] - a[0]) + 2 * h), q(Math.abs(c[1] - a[1]) + 2 * h)]);
   }
   b.fillStyle = T.p[0]; segs.forEach(s => b.fillRect(s[0] - 4, s[1] - 4, s[2] + 8, s[3] + 8));
+  const ci = MAPA.caminho && tileImg(MAPA.caminho);
+  if (ci) drawCaminho(b, ci, segs); else {
   b.fillStyle = T.p[1]; segs.forEach(s => b.fillRect(s[0], s[1], s[2], s[3]));
   b.fillStyle = T.p[2];
-  segs.forEach(s => { for (let y = s[1]; y < s[1] + s[3]; y += 8) for (let x = s[0]; x < s[0] + s[2]; x += 8) if ((x * 5 + y * 3) % 7 === 0) b.fillRect(x + 2, y + 2, 2, 2); });
+  segs.forEach(s => { for (let y = s[1]; y < s[1] + s[3]; y += 8) for (let x = s[0]; x < s[0] + s[2]; x += 8) if ((x * 5 + y * 3) % 7 === 0) b.fillRect(x + 2, y + 2, 2, 2); }); }
   // obstáculos (sem torres): moitas/rochas em blocos 2px
-  const ob = T.ob || TEMA0.ob;
+  const ob = T.ob || TEMA0.ob, oi = MAPA.obst && tileImg(MAPA.obst);
+  if (oi) for (const [bx, by, bw, bh] of MAPA.bloq) for (let y = by; y < by + bh; y += 20) for (let x = bx; x < bx + bw; x += 20) {
+    const h = (((x / 4) * 73856093) ^ ((y / 4) * 19349663)) >>> 0;
+    b.drawImage(oi, (h % 4) * 32, 0, 32, 32, q(x + (h >>> 8) % 3 * 2 - 6), q(y + (h >>> 12) % 3 * 2 - 8), 32, 32);
+  } else
   for (const [bx, by, bw, bh] of MAPA.bloq) for (let y = by; y < by + bh; y += 12) for (let x = bx; x < bx + bw; x += 12) {
     const jx = (x * 7 + y * 3) % 5 * 2, jy = (x * 3 + y * 5) % 5 * 2;
     b.fillStyle = ob[0]; b.fillRect(q(x + jx), q(y + jy), 14, 14); b.fillStyle = ob[1]; b.fillRect(q(x + jx + 2), q(y + jy + 2), 10, 8); b.fillStyle = '#5a3a1a'; b.fillRect(q(x + jx + 6), q(y + jy + 10), 4, 4);
@@ -138,6 +160,8 @@ function drawBgExtra() {
   }
   for (const [mx, my, mw, mh] of MAPA.muros) {
     b.fillStyle = '#34343c'; b.fillRect(q(mx) - 2, q(my) - 2, q(mw) + 4, q(mh) + 4);
+    const mi = MAPA.muro && tileImg(MAPA.muro);
+    if (mi) { b.save(); b.beginPath(); b.rect(q(mx), q(my), q(mw), q(mh)); b.clip(); for (let y = Math.floor(q(my) / 32) * 32; y < my + mh; y += 32) for (let x = Math.floor(q(mx) / 32) * 32; x < mx + mw; x += 32) b.drawImage(mi, (((x >> 5) * 7 + (y >> 5) * 3) & 3) * 32, 0, 32, 32, x, y, 32, 32); b.restore(); b.fillStyle = '#9a9aa6'; b.fillRect(q(mx), q(my), q(mw), 2); continue; }
     b.fillStyle = '#6e6e78'; b.fillRect(q(mx), q(my), q(mw), q(mh));
     b.fillStyle = '#9a9aa6'; b.fillRect(q(mx), q(my), q(mw), 2);
     b.fillStyle = '#4a4a54';
@@ -191,10 +215,15 @@ function startWave() {
   S.groups = S.plano;
 }
 
+// limite de inimigos vivos no mapa (CFG.maxGob em data.js sobrescreve); o excedente espera na fila e nasce conforme abrem vagas. Chefes ignoram o limite
+const maxGob = () => CFG.maxGob || 400;
 const mkG = (tipo, x, y, wp, rt, vm, hp) => ({ tipo, d: GOBLINS[tipo], x, y, vx: 0, vy: 0, vm, wp, rt, prog: 0, hp, max: hp, r: GOBLINS[tipo].r, slow: 0, burn: 0, bd: 0, ph: rnd(0, 6.28), flash: 0, dead: false, lane: rnd(0.2, 1) });
 function spawnGroup(gr) {
   const o = gr.o, D = dif(MAPA.nivel), rt = Math.floor(Math.random() * MAPA.rotas.length), P0 = MAPA.rotas[rt], a = P0[0], b = P0[1], L = Math.hypot(b[0] - a[0], b[1] - a[1]), ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L, vm = D.vel * (o.vel[0] + (o.vel[1] - o.vel[0]) * gr.u);
-  gr.list.forEach(tipo => {
+  const lv = Math.max(0, maxGob() - S.gob.length), cur = [], rest = []; let nSp = 0;
+  for (const tipo of gr.list) (GOBLINS[tipo].boss || nSp++ < lv ? cur : rest).push(tipo);
+  gr.list = rest;
+  cur.forEach(tipo => {
     const d = GOBLINS[tipo], hp = d.fixo ? d.hp : Math.round(d.hp * D.hp * (o.hp[0] + (o.hp[1] - o.hp[0]) * gr.u));
     { const back = rnd(-54, 30), lat = rnd(-MAPA.larg / 2 + 8, MAPA.larg / 2 - 8); // nasce na entrada da rota, na direção do primeiro trecho (esquerda, topo ou base)
       S.gob.push(mkG(tipo, a[0] - ux * back - uy * lat, a[1] - uy * back + ux * lat, 1, rt, vm, hp)); }
@@ -280,7 +309,7 @@ function raio(t, st, ex) {
   for (let i = 0; g && i <= def.cadeia + pk('tes_salto'); i++) {
     lineFx(px, py, g.x, g.y); hit(g, st.dano, false, t); vis.add(g); px = g.x; py = g.y;
     const ci = ((g.x / CELL) | 0) + 1 + ((g.y / CELL) | 0) * COLS; let nx = null, nd = def.elo;
-    for (let oy = -2; oy <= 2; oy++) for (let ox = -2; ox <= 2; ox++) { const c = GRID[ci + ox + oy * COLS]; if (c) for (const o of c) if (!o.dead && !vis.has(o)) { const d = Math.hypot(o.x - px, o.y - py); if (d < nd) { nd = d; nx = o; } } }
+    for (let oy = -2; oy <= 2; oy++) for (let ox = -2; ox <= 2; ox++) { const c = GRID[ci + ox + oy * COLS]; if (c) for (const o of c) if (!o.dead && !vis.has(o) && foraZ(t, o.x, o.y)) { const d = Math.hypot(o.x - px, o.y - py); if (d < nd) { nd = d; nx = o; } } }
     g = nx;
   }
   return vis;
@@ -315,7 +344,7 @@ function updateTowers() {
     let tg = null, mt = null; const ci = ((p.x / CELL) | 0) + 1 + ((p.y / CELL) | 0) * COLS;
     hitSearch: for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
       const c = GRID && GRID[ci + ox + oy * COLS]; if (!c) continue;
-      for (const g of c) { const dx = g.x - p.x, dy = g.y - p.y, rr = g.r + 6; if (!g.dead && !(p.vis && p.vis.has(g)) && dx * dx + dy * dy < rr * rr && Math.hypot(p.x - p.src.x, p.y - p.src.y) >= zm(p.src)) { tg = g; if (!p.def.multi) break hitSearch; (mt = mt || []).push(g); } }
+      for (const g of c) { const dx = g.x - p.x, dy = g.y - p.y, rr = g.r + 6; if (!g.dead && !(p.vis && p.vis.has(g)) && dx * dx + dy * dy < rr * rr && foraZ(p.src, g.x, g.y)) { tg = g; if (!p.def.multi) break hitSearch; (mt = mt || []).push(g); } }
     }
     if (mt) { p.vis = p.vis || new Set(); for (const g of mt) { hit(g, p.dano * (1 + Math.min(1, ef('bal_pen') * p.vis.size)), !!p.src.evo, p.src); p.vis.add(g); } } // balista: atravessa todos na linha; Impacto soma dano por inimigo já atravessado
     else if (tg && p.furo > 0) { hit(tg, p.dano, false, p.src); p.furo--; (p.vis = p.vis || new Set()).add(tg); } // perfuração: atravessa e segue
@@ -324,8 +353,8 @@ function updateTowers() {
       if (p.def.tipo === 'flecha' || p.def.tipo === 'lanca') { if (tg) hit(tg, p.dano, false, p.src); }
       else if (p.def.tipo === 'poca') { S.zon.push({ x: p.x, y: p.y, r: p.raio, life: p.def.dur, tick: p.def.tick, dano: p.dano, pct: p.def.pct * p.dano / p.def.dano * (1 + ef('ven_corr')), src: p.src, evo: p.src.evo }); burst(p.x, p.y, 10, '#b8ff8a', p.def.cor2, 1.4); }
       else {
-        for (const g of S.gob) if (!g.dead && Math.hypot(g.x - p.x, g.y - p.y) < p.raio) hit(g, p.dano, false, p.src);
-        if (p.src.evo) { const R2 = p.raio * 1.7; for (const g of S.gob) { const d = Math.hypot(g.x - p.x, g.y - p.y); if (!g.dead && d >= p.raio && d < R2) hit(g, p.dano * 0.5, false, p.src); } ringFx(p.x, p.y, R2 * 0.9, '#ffffff', '#ffb030'); }
+        for (const g of S.gob) if (!g.dead && Math.hypot(g.x - p.x, g.y - p.y) < p.raio && foraZ(p.src, g.x, g.y)) hit(g, p.dano, false, p.src);
+        if (p.src.evo) { const R2 = p.raio * 1.7; for (const g of S.gob) { const d = Math.hypot(g.x - p.x, g.y - p.y); if (!g.dead && d >= p.raio && d < R2 && foraZ(p.src, g.x, g.y)) hit(g, p.dano * 0.5, false, p.src); } ringFx(p.x, p.y, R2 * 0.9, '#ffffff', '#ffb030'); }
         burst(p.x, p.y, 14, '#ffffff', '#ffb030', 2.4); ringFx(p.x, p.y, p.raio * 0.6, '#ffb030', '#7a3a10');
       }
     }
@@ -350,7 +379,7 @@ function updateGoblins() {
       if (g.dead) continue;
     }
     if (g.d.cura) xamas.push(g);
-    if (g.d.invoca && S.t % g.d.invoca === 0) for (let i = 0; i < 12; i++) nasc.push(mkG('comum', g.x + rnd(-14, 14), g.y + rnd(-14, 14), g.wp, g.rt, g.vm, GOBLINS.comum.hp));
+    if (g.d.invoca && S.t % g.d.invoca === 0) for (let i = 0; i < 12 && S.gob.length + nasc.length < maxGob() + 30; i++) nasc.push(mkG('comum', g.x + rnd(-14, 14), g.y + rnd(-14, 14), g.wp, g.rt, g.vm, GOBLINS.comum.hp));
     const sp = g.frz > 0 ? 0 : g.d.vel * g.vm * (g.slow > 0 ? (g.d.boss ? 0.75 : TOWERS.gelo.slow) : 1); if (g.slow > 0) g.slow--; if (g.frz > 0) g.frz--;
     let ax = dx / d * sp, ay = dy / d * sp;
     ax += Math.cos(S.t * 0.04 + (g.d.enxame ? (g.x + g.y) * 0.04 : g.ph)) * 0.12; ay += Math.sin(S.t * 0.05 + (g.d.enxame ? (g.x - g.y) * 0.04 : g.ph)) * 0.2;
@@ -384,7 +413,7 @@ function updateGoblins() {
 function updateExtras() {
   for (const z of S.zon) {
     z.life--;
-    if (S.t % z.tick === 0) for (const g of S.gob) if (!g.dead && g.pz !== S.t && Math.hypot(g.x - z.x, g.y - z.y) < z.r) { g.pz = S.t; if (z.evo && !g.d.boss) g.slow = Math.max(g.slow, 45); hit(g, z.dano + g.max * z.pct * (g.d.boss ? 0.25 : 1), true, z.src); }
+    if (S.t % z.tick === 0) for (const g of S.gob) if (!g.dead && g.pz !== S.t && Math.hypot(g.x - z.x, g.y - z.y) < z.r && foraZ(z.src, g.x, g.y)) { g.pz = S.t; if (z.evo && !g.d.boss) g.slow = Math.max(g.slow, 45); hit(g, z.dano + g.max * z.pct * (g.d.boss ? 0.25 : 1), true, z.src); }
     if (S.t % 6 === 0) S.part.push({ x: z.x + rnd(-z.r, z.r) * 0.8, y: z.y + rnd(-z.r, z.r) * 0.8, vx: 0, vy: -0.3, life: 14, max: 14, c1: '#b8ff8a', c2: '#2a8a28' });
   }
   S.zon = S.zon.filter(z => z.life > 0);
@@ -406,7 +435,7 @@ function pagar() {
 }
 function update() {
   S.t++;
-  for (const gr of S.groups) { gr.delay--; if (gr.delay <= 0) { spawnGroup(gr); gr.done = true; } }
+  for (const gr of S.groups) { if (gr.delay > 0) gr.delay--; if (gr.delay <= 0 && (S.gob.length < maxGob() || gr.list.includes('chefe'))) { spawnGroup(gr); if (!gr.list.length) gr.done = true; } }
   S.groups = S.groups.filter(g => !g.done);
   updateGoblins(); updateTowers(); updateExtras();
   for (const p of S.part) { p.x += p.vx; p.y += p.vy; p.life--; if (p.jit) { p.vx *= 0.92; p.vy *= 0.92; if (p.life % 3 === 0) { p.x += rnd(-2, 2); p.y += rnd(-2, 2); } } }
@@ -417,6 +446,7 @@ function update() {
 
 // ---------- desenho (cores 100% sólidas, grade de 2px) ----------
 function ring(x, y, r, c) { ctx.fillStyle = c; for (let a = 0; a < 6.28; a += 8 / r) ctx.fillRect(q(x + Math.cos(a) * r), q(y + Math.sin(a) * r), 2, 2); }
+function ringZ(x, y, r, c) { ctx.fillStyle = c; for (let a = 0; a < 6.28; a += 2 / r) ctx.fillRect(q(x + Math.cos(a) * r), q(y + Math.sin(a) * r), 2, 2); } // zona morta: anel contínuo (sem lacunas) em blocos 2x2
 function box(x, y, s, c) { ctx.fillStyle = c; ctx.fillRect(q(x - s / 2), q(y - s / 2), s, s); }
 
 // cone de tiro: bordas e arco em blocos 2x2 sólidos
@@ -430,7 +460,7 @@ function drawAim() {
   if (Math.hypot(dx, dy) > 6) A.dir = Math.atan2(dy, dx);
   const alc = A.edit ? tStat(A.edit).alc : A.def.alcance * (1 + ef(PRE[A.k] + '_alc')) * (MAPA.mod.alc || 1) * nevoaF(A.x, A.y);
   if (!A.edit) box(A.x, A.y, 10, A.def.cor);
-  coneFx(A.x, A.y, alc, A.dir, A.cone, '#ffffff'); if (ZM[A.k]) ring(A.x, A.y, ZM[A.k], '#ff4040');
+  coneFx(A.x, A.y, alc, A.dir, A.cone, '#ffffff'); if (ZM[A.k]) ringZ(A.x, A.y, ZM[A.k], '#ff4040');
 }
 function txt(s, x, y, c, al) { ctx.textAlign = al || 'left'; ctx.fillStyle = '#10161e'; for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) ctx.fillText(s, x + dx, y + dy); ctx.fillStyle = c; ctx.fillText(s, x, y); ctx.textAlign = 'left'; }
 function drawHud() {
@@ -462,10 +492,32 @@ function drawHud() {
   if (!S.wave) txt('Monte a defesa e chame a horda (N / Enter)', CFG.W / 2, CFG.H - 10, '#ffffff', 'center');
 }
 
+// sprites dos goblins: carrega a sheet (2 quadros) e pré-gera as variantes por estado (normal/flash/gelo/fogo/lentidão) × direção (direita/esquerda). Null enquanto não carregou (usa os blocos)
+const GSPR = {};
+function gobSpr(tipo) {
+  let s = GSPR[tipo];
+  if (!s) {
+    s = GSPR[tipo] = { v: null }; const im = new Image(), [w, h] = SPR_GOB[tipo];
+    im.onload = () => {
+      s.v = {};
+      for (const [st, cor, xadrez] of [['n'], ['flash', '#ffffff'], ['frz', '#b8f0ff'], ['burn', '#ff8a2c', 1], ['slow', '#6fd6ff', 1]]) s.v[st] = [0, 1].map(flip => {
+        const c = document.createElement('canvas'); c.width = w * 2; c.height = h; const x = c.getContext('2d'); x.imageSmoothingEnabled = false;
+        for (let f = 0; f < 2; f++) { x.save(); if (flip) { x.translate(w * (f + 1), 0); x.scale(-1, 1); x.drawImage(im, f * w, 0, w, h, 0, 0, w, h); } else x.drawImage(im, f * w, 0, w, h, f * w, 0, w, h); x.restore(); }
+        if (cor) { x.globalCompositeOperation = 'source-atop'; x.fillStyle = cor; if (xadrez) { for (let yy = 0; yy < h; yy += 2) for (let xx = 0; xx < w * 2; xx += 2) if (((xx >> 1) + (yy >> 1)) & 1) x.fillRect(xx, yy, 2, 2); } else x.fillRect(0, 0, w * 2, h); }
+        return c;
+      });
+    };
+    im.src = `assets/sprites/goblins/goblin_${tipo}_sheet.png`;
+  }
+  return s.v ? s : null;
+}
+
 function draw() {
   ctx.drawImage(bg, 0, 0);
   const bx = CFG.baseX, by = CFG.baseY;
-  box(bx, by, 64, '#4a4a55'); box(bx, by, 52, '#8a8a95'); box(bx, by, 28, '#5a4630'); box(bx, by - 40, 6, '#ff4040');
+  const cs = MAPA.castelo && tileImg(MAPA.castelo);
+  if (cs) { ctx.imageSmoothingEnabled = false; ctx.drawImage(cs, q(bx - 32), q(by - 48)); }
+  else { box(bx, by, 64, '#4a4a55'); box(bx, by, 52, '#8a8a95'); box(bx, by, 28, '#5a4630'); box(bx, by - 40, 6, '#ff4040'); }
   for (const h of MAPA.perigos) { const warn = S.ativa && h.per - (S.run + h.off) % h.per <= 90 && S.t % 10 < 5; ctx.fillStyle = warn ? '#ff4040' : h.cor2; for (const [x, y] of h.borda) ctx.fillRect(x, y, 2, 2); }
   for (const z of S.zon) { if (z.life > 60 || z.life % 8 < 5) ring(z.x, z.y, z.r, '#6ae04c'); ring(z.x, z.y, z.r * 0.55, '#2a8a28'); }
   for (const t of S.tow) {
@@ -479,8 +531,13 @@ function draw() {
   }
   for (const g of S.gob) {
     const s = g.r * 2, c = g.flash > 0 ? '#ffffff' : g.frz > 0 ? '#b8f0ff' : g.burn > 0 ? '#ff8a2c' : g.slow > 0 ? '#6fd6ff' : g.d.cor;
-    if (g.d.enxame) box(g.x, g.y, s, c); else { box(g.x, g.y, s, g.d.cor2); box(g.x, g.y, s - 2, c); box(g.x + 2, g.y - 2, 2, '#ff3030'); }
-    if (g.hp < g.max) { const w = q(s * g.hp / g.max); ctx.fillStyle = '#400'; ctx.fillRect(q(g.x - g.r), q(g.y - g.r - 4), s, 2); ctx.fillStyle = '#4f4'; ctx.fillRect(q(g.x - g.r), q(g.y - g.r - 4), w, 2); }
+    const sp = gobSpr(g.tipo), hw = sp ? SPR_GOB[g.tipo][0] : s, hh = sp ? SPR_GOB[g.tipo][1] : s;
+    if (sp) {
+      if (g.vx > 0.05) g.fl = 0; else if (g.vx < -0.05) g.fl = 1;
+      const st = g.flash > 0 ? 'flash' : g.frz > 0 ? 'frz' : g.burn > 0 ? 'burn' : g.slow > 0 ? 'slow' : 'n', f = ((S.t >> 3) + ((g.ph * 3) | 0)) & 1;
+      ctx.imageSmoothingEnabled = false; ctx.drawImage(sp.v[st][g.fl | 0], f * hw, 0, hw, hh, q(g.x - hw / 2), q(g.y - hh / 2), hw, hh);
+    } else if (g.d.enxame) box(g.x, g.y, s, c); else { box(g.x, g.y, s, g.d.cor2); box(g.x, g.y, s - 2, c); box(g.x + 2, g.y - 2, 2, '#ff3030'); }
+    if (g.hp < g.max) { const w = q(hw * g.hp / g.max), X = q(g.x - hw / 2), Y = q(g.y - hh / 2 - 4); ctx.fillStyle = '#400'; ctx.fillRect(X, Y, hw, 2); ctx.fillStyle = '#4f4'; ctx.fillRect(X, Y, w, 2); }
   }
   for (const p of S.proj) { box(p.x, p.y, p.def.tipo === 'bomba' ? 6 : 4, p.def.cor2); box(p.x, p.y, p.def.tipo === 'bomba' ? 4 : 2, '#ffffff'); }
   for (const p of S.part) {
@@ -490,8 +547,8 @@ function draw() {
   // fantasma da torre / alcance
   const over = S.tow.find(t => Math.hypot(t.x - S.mx, t.y - S.my) < 12);
   if (S.aim) drawAim();
-  else if (over && over.def.tipo !== 'aura') { coneFx(over.x, over.y, tStat(over).alc, over.dir, over.cone, '#ffffff'); if (zm(over)) ring(over.x, over.y, zm(over), '#ff4040'); }
-  else { const d = TOWERS[S.sel]; ring(S.mx, S.my, d.alcance * (1 + ef(PRE[S.sel] + '_alc')) * (MAPA.mod.alc || 1) * nevoaF(S.mx, S.my), canPlace(S.mx, S.my) && !cheio(S.sel) ? '#ffffff' : '#ff4040'); box(S.mx, S.my, 10, d.cor); }
+  else if (over && over.def.tipo !== 'aura') { coneFx(over.x, over.y, tStat(over).alc, over.dir, over.cone, '#ffffff'); if (zm(over)) ringZ(over.x, over.y, zm(over), '#ff4040'); }
+  else { const d = TOWERS[S.sel]; ring(S.mx, S.my, d.alcance * (1 + ef(PRE[S.sel] + '_alc')) * (MAPA.mod.alc || 1) * nevoaF(S.mx, S.my), canPlace(S.mx, S.my, S.sel) && !cheio(S.sel) ? '#ffffff' : '#ff4040'); box(S.mx, S.my, 10, d.cor); if (ZM[S.sel]) ringZ(S.mx, S.my, ZM[S.sel], '#ff4040'); }
   if (over && !S.aim && pk(PRE[over.k] + '_evo') > 0) { ctx.font = 'bold 11px monospace'; txt(over.evo ? 'EVOLUÍDA' : `Evolução ${over.kills || 0}/${S.need[over.k]}`, over.x, over.y - 22, over.evo ? '#ffd84c' : '#ffffff', 'center'); }
   // HUD
   drawHud();
@@ -500,8 +557,8 @@ function draw() {
 }
 
 // ---------- entrada ----------
-function canPlace(x, y) {
-  return y > 72 && nearPath(x, y).d > MAPA.larg / 2 + 12 && baseDist(x, y) > CFG.baseR + 24 && !S.tow.some(t => Math.hypot(t.x - x, t.y - y) < 20)
+function canPlace(x, y, k) { // k (opcional): torre a posicionar; torres não podem ficar dentro da zona morta uma da outra (mínimo 20px)
+  return y > 72 && nearPath(x, y).d > MAPA.larg / 2 + 12 && baseDist(x, y) > CFG.baseR + 24 && !S.tow.some(t => Math.hypot(t.x - x, t.y - y) < Math.max(20, ZM[k] || 0, zm(t)))
     && ![...MAPA.bloq, ...MAPA.muros].some(b => x > b[0] - 6 && x < b[0] + b[2] + 6 && y > b[1] - 6 && y < b[1] + b[3] + 6);
 }
 function pos(e) { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * CFG.W / r.width, (e.clientY - r.top) * CFG.H / r.height]; }
@@ -525,7 +582,7 @@ cv.addEventListener('click', e => {
   const [x, y] = pos(e), t = S.tow.find(t => Math.hypot(t.x - x, t.y - y) < 12);
   if (t) { if (t.def.tipo !== 'aura') S.aim = { x: t.x, y: t.y, def: t.def, k: t.k, dir: t.dir, cone: t.cone, edit: t }; return; }
   const def = TOWERS[S.sel];
-  if (!cheio(S.sel) && livre(S.sel) && canPlace(x, y)) {
+  if (!cheio(S.sel) && livre(S.sel) && canPlace(x, y, S.sel)) {
     if (def.tipo === 'aura') { S.tow.push({ x: q(x), y: q(y), def, k: S.sel, lvl: 1, cd: 0, dir: 0, cone: 0, sw: 0, sd: 1 }); buildShop(); return; } // totem não precisa mirar
     const n = nearPath(x, y); S.aim = { x: q(x), y: q(y), def, k: S.sel, dir: Math.atan2(n.y - y, n.x - x), cone: rad(def.cone), edit: null };
   }
